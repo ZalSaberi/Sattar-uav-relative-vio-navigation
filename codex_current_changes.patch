@@ -1,0 +1,91 @@
+diff --git a/requirements.txt b/requirements.txt
+index a090ef6..822a6f1 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -7,3 +7,4 @@ logging
+ typing
+ pandas
+ pyyaml
++
+diff --git a/run.bat b/run.bat
+index 4027bd6..afa09dc 100644
+--- a/run.bat
++++ b/run.bat
+@@ -6,7 +6,7 @@ for %%D in (
+   V1_01_easy V1_03_difficult V2_01_easy V2_03_difficult
+ ) do (
+   for %%O in (1 5 10 15 20 30 40) do (
+-    echo Running %%D offset=%%O
++    echo Запуск %%D offset=%%O
+     python main.py --path "datasets\%%D" --offset %%O
+   )
+ )
+diff --git a/src/image_processing/pipeline.py b/src/image_processing/pipeline.py
+index 168afaa..0d273b3 100644
+--- a/src/image_processing/pipeline.py
++++ b/src/image_processing/pipeline.py
+@@ -63,12 +63,12 @@ class ImageProcessingPipeline:
+         pyr0, pyr1 = pyramid_builder.create_image_pyramids()
+ 
+         stereo_matcher = StereoMatcher(
+-                self.config.lk_params,
+-                self.imu_processor,
+-                pyramid_builder,
+-                self.camera_model,
+-                self.config.stereo_threshold
+-            )
++            self.config.lk_params,
++            self.imu_processor,
++            pyramid_builder,
++            self.camera_model,
++            self.config.stereo_threshold
++        )
+ 
+         if self.first_frame:
+             initializer = FeatureInitializer(
+diff --git a/src/msckf.py b/src/msckf.py
+index 2f6207f..08a4bcd 100644
+--- a/src/msckf.py
++++ b/src/msckf.py
+@@ -864,4 +864,4 @@ class MSCKF(object):
+         self._write_state(imu_state)
+         
+         return namedtuple('vio_result', ['timestamp', 'pose', 'velocity', 'cam0_pose'])(
+-            time, T_b_w, body_velocity, T_c_w)
++            time, T_b_w, body_velocity, T_c_w)
+\ No newline at end of file
+diff --git a/src/run.bat b/src/run.bat
+index 8e3df97..b33298d 100644
+--- a/src/run.bat
++++ b/src/run.bat
+@@ -6,7 +6,7 @@ for %%D in (
+   V1_01_easy V1_03_difficult V2_01_easy V2_03_difficult
+ ) do (
+   for %%O in (1 5 10 15 20 30 40) do (
+-    echo Running %%D offset=%%O
++    echo Запуск %%D offset=%%O
+     python main.py --path "..\Datasets\%%D" --offset %%O
+   )
+ )
+diff --git a/src/streaming/dataset.py b/src/streaming/dataset.py
+index af9a5f4..eca1787 100644
+--- a/src/streaming/dataset.py
++++ b/src/streaming/dataset.py
+@@ -217,4 +217,4 @@ class EuRoCDataset(object):   # Stereo + IMU
+         xs = [_ for _ in os.listdir(dir) if _.endswith('.png')]
+         xs = sorted(xs, key=lambda x:float(x[:-4]))
+         timestamps = [float(_[:-4]) * 1e-9 for _ in xs]
+-        return [os.path.join(dir, _) for _ in xs], timestamps
++        return [os.path.join(dir, _) for _ in xs], timestamps
+\ No newline at end of file
+diff --git a/src/streaming/publisher.py b/src/streaming/publisher.py
+index 736f60d..3b465da 100644
+--- a/src/streaming/publisher.py
++++ b/src/streaming/publisher.py
+@@ -108,4 +108,4 @@ if __name__ == '__main__':
+     print(f'\nelapsed time: {time.time() - now}s')
+     print(f'dataset time interval: {timestamps[-1]} -> {timestamps[0]}'
+         f'  ({timestamps[-1]-timestamps[0]}s)\n')
+-    print('Please check if IMU and image are synced')
++    print('Please check if IMU and image are synced')
+\ No newline at end of file

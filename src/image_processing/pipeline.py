@@ -63,12 +63,12 @@ class ImageProcessingPipeline:
         pyr0, pyr1 = pyramid_builder.create_image_pyramids()
 
         stereo_matcher = StereoMatcher(
-                self.config.lk_params,
-                self.imu_processor,
-                pyramid_builder,
-                self.camera_model,
-                self.config.stereo_threshold
-            )
+            self.config.lk_params,
+            self.imu_processor,
+            pyramid_builder,
+            self.camera_model,
+            self.config.stereo_threshold
+        )
 
         if self.first_frame:
             initializer = FeatureInitializer(
