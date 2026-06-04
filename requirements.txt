@@ -1,0 +1,9 @@
+numpy
+opencv-python
+opencv-contrib-python
+matplotlib
+scipy
+logging
+typing
+pandas
+pyyaml
