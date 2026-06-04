@@ -1,126 +1,140 @@
 # UAV-Airvision
 
-[![en](https://img.shields.io/badge/lang-en-red.svg)](https://github.com/BUBLET/uav-airvision/blob/master/README.md)
-[![ru](https://img.shields.io/badge/lang-ru-blue?style=flat&logoColor=blue)](https://github.com/BUBLET/uav-airvision/blob/master/README-ru.md)
-![Views](https://visitor-badge.laobi.icu/badge?page_id=https://github.com/BUBLET/uav-airvision/blob/master/README.md)
+UAV-Airvision is a Python visual-inertial odometry prototype for EuRoC MAV stereo camera and IMU data. It loads EuRoC sequences, publishes IMU and stereo frames into worker queues, tracks stereo features, and feeds them into an MSCKF-based estimator.
 
+Phase 1 focuses on making the project launch consistently. The core MSCKF/VIO math has not been changed in this runtime-baseline pass.
 
-## About
-UAV AirVision is a high-precision visual-inertial odometry (VIO) module for unmanned aerial vehicles (UAVs).
-The project is designed to estimate the motion trajectory using stereo cameras and an IMU.
-The architecture is implemented based on MSCKF (Multi-State Constraint Kalman Filter) to fuse visual and inertial data.
-
-## Features
-- Processing and synchronization of IMU and stereo camera data
-- Feature tracking using Lucas-Kanade optical flow
-- Stereo matching and filtering based on epipolar constraints and RANSAC
-- Initialization and optimization of 3D feature positions with small-angle assumptions
-- MSCKF Kalman filtering with a camera state buffer support
-- Asynchronous data processing with multithreading
-- Visualization with 3D graphics and live image display
-- Configuration for EuRoC MAV dataset with predefined camera and IMU parameters
-- Support for running experiments with automatic time offset parameter sweeping
-
-## Repository Structure
-```graphql
-├── config.py          # Camera, IMU, and filter parameter configurations
-├── dataset.py         # Loading and preprocessing EuRoC MAV dataset
-├── publisher.py       # Publishing data streams (IMU, stereo)
-├── pipeline.py        # Main image and feature processing pipeline
-├── feature_*          # Classes and modules for feature tracking, initialization, adding, pruning, publishing
-├── imu_processor.py   # IMU data processing and integration
-├── camera_model.py    # Camera model, distortion and point correction
-├── stereo_matcher.py  # Stereo point matching with filtering
-├── utils.py           # Utility functions (quaternions, rotation matrices, etc.)
-├── modules/
-│   └── vio.py         # VIO class handling IMU and image streams
-├── viewer.py          # Visualization with PyQt and pyqtgraph 3D
-├── main.py            # Entry point, experiment launch with parameters
-├── run.bat            # Script to run experiments with dataset and offset sweeping
-├── requirements.txt   # Project dependencies
-├── README.md          
-└── results/           # Folder with results and logs
-```
 ## Requirements
-- Python 3.10+
-- OpenCV (cv2)
-- NumPy
-- PyQt5
-- pyqtgraph
-- SciPy
 
-## Install dependencies:
+- Windows with PowerShell or Command Prompt
+- Python 3.10 or newer
+- A EuRoC MAV sequence extracted locally
 
-```bash
-pip install -r requirements.txt
+Core Python dependencies are listed in `requirements.txt`:
+
+```text
+numpy
+opencv-python
+scipy
 ```
 
-## Quick Start
+Viewer mode is optional and additionally requires `PyQt5` and `pyqtgraph`.
 
-Download and extract the EuRoC MAV dataset.
-Specify the dataset path with the --path argument when launching.
+## Windows Setup
 
-Run the script:
+From the repository root:
 
-```bash
-python main.py --path ./datasets/MH_01_easy --offset 10 --view
-
---offset — time shift in seconds to synchronize IMU and camera data
-
---view — if set, opens the visualizer with 3D trajectory and images
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-Results (trajectory and state) are saved to the results/txts/ folder as files named output_<dataset>_offset<offset>.txt.
+Optional viewer dependencies:
 
-## Architecture
+```powershell
+python -m pip install PyQt5 pyqtgraph
+```
 
-DataPublisher — asynchronously publishes dataset messages into queues
-VIO — processes IMU and images in separate threads, estimates position using MSCKF
-ImageProcessingPipeline — image pyramid building, tracking, feature initialization and adding, filtering
-MSCKF — Extended Kalman Filter updating orientation, position, and IMU/camera biases
-Viewer — real-time result visualization
+## Dataset Layout
 
-## Main configuration parameters
+Pass `--path` to one EuRoC sequence directory, not to the parent dataset folder.
 
-- Configured in config.py in the ConfigEuRoC class:
-- Camera parameters (intrinsics, distortion, extrinsics)
-- Filter parameters (noise, thresholds, max camera states)
-- Tracking parameters (RANSAC threshold, LK parameters, feature distribution grid)
+Expected structure:
 
-## Results and Visualization
+```text
+datasets\MH_01_easy\mav0\imu0\data.csv
+datasets\MH_01_easy\mav0\state_groundtruth_estimate0\data.csv
+datasets\MH_01_easy\mav0\cam0\data\*.png
+datasets\MH_01_easy\mav0\cam1\data\*.png
+```
 
-- The system outputs estimated trajectories and states saved in the `results/txts/` folder as files named:
-  
-  `output_<dataset>_offset<offset>.txt`
+The runner validates these paths before processing and reports missing files clearly.
 
-- These results can be analyzed and visualized using included plotting scripts or external tools.
+## Run
 
-- Visualizations include:
-  - 3D trajectory plots comparing estimated path vs ground truth
-  - Error metrics graphs (e.g., Absolute Trajectory Error - ATE, Relative Pose Error - RPE)
-  - Live visualization during processing (if run with `--view`)
+Supported command from the repository root:
 
-### Example plots
+```powershell
+python main.py --path .\datasets\MH_01_easy --offset 10
+```
 
-![3D Trajectory](results/MH_01_easy/trajectories.png)  
-*Estimated trajectory vs ground truth.*
+Equivalent package command:
 
-![ATE Graph](results/MH_01_easy/ate_vs_path.png)  
-*Absolute Trajectory Error over path.*
+```powershell
+python -m src.main --path .\datasets\MH_01_easy --offset 10
+```
 
-![RTE Graph](results/MH_01_easy/rte_vs_path.png)
-*Relative Trajectory Error over time.*
+Run with the optional viewer:
 
-![ATE Summary Graph](results/ate_summary.png)
-*Absolute Trajectory Error summary.*
+```powershell
+python main.py --path .\datasets\MH_01_easy --offset 10 --view
+```
 
-![RTE Summary Graph](results/rte_summary.png)
-*Relative Trajectory Error summary.*
+Batch sweeps can be launched with:
 
+```powershell
+.\run.bat
+```
 
-## Notes
-EuRoC MAV original dataset format is required to run the project.
+## Output
 
-The run.bat script allows running a series of experiments with different time offsets.
+Trajectory text files are created automatically under:
 
-The code is strictly organized by classes and modules for ease of extension and testing.
+```text
+results\txts\
+```
+
+Default file name:
+
+```text
+output_<dataset>_offset<offset>.txt
+```
+
+Repeated runs replace the same output file by default and write a header:
+
+```text
+# timestamp p_x p_y p_z q_x q_y q_z q_w
+```
+
+Append intentionally with:
+
+```powershell
+python main.py --path .\datasets\MH_01_easy --offset 10 --append-output
+```
+
+Use a different output directory with:
+
+```powershell
+python main.py --path .\datasets\MH_01_easy --offset 10 --output-dir .\outputs\txts
+```
+
+## Smoke Check
+
+Check imports:
+
+```powershell
+python tools\smoke_check.py
+```
+
+Check imports and dataset structure:
+
+```powershell
+python tools\smoke_check.py --dataset .\datasets\MH_01_easy
+```
+
+Optional viewer import check:
+
+```powershell
+python tools\smoke_check.py --check-viewer
+```
+
+## Documentation
+
+- Phase 0 audit: `docs\AUDIT_REPORT.md`
+- Runtime runbook: `docs\RUNBOOK.md`
+
+## Current Limitations
+
+The Phase 1 runtime baseline does not fix core estimator correctness. Known remaining risks include stereo matching geometry, image-processing outlier rejection, threading/data ownership, and MSCKF gating/covariance math. See `docs\AUDIT_REPORT.md` for the staged fix plan.

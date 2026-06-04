@@ -1,7 +1,7 @@
 from queue import Queue
 from threading import Thread
-from image_processing import ImageProcessor
-from msckf import MSCKF
+from ..image_processing import ImageProcessor
+from ..msckf import MSCKF
 
 class VIO:
     def __init__(self, config, img_queue, imu_queue, viewer=None):
@@ -22,6 +22,11 @@ class VIO:
         self.img_thread.start()
         self.imu_thread.start()
         self.vio_thread.start()
+
+    def join(self):
+        self.img_thread.join()
+        self.imu_thread.join()
+        self.vio_thread.join()
 
     def _process_img(self):
         while True:

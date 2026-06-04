@@ -23,6 +23,10 @@ class DataPublisher(object):
         self.starttime = starttime
         self.publish_thread.start()
 
+    def join(self):
+        if self.started:
+            self.publish_thread.join()
+
     def stop(self):
         self.stopped = True
         if self.started:
