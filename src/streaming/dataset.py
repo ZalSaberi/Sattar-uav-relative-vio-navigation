@@ -151,7 +151,12 @@ class ImageReader(object):
         self.thread_started = False
 
     def read(self, path):
-        return cv2.imread(path, -1)
+        image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            raise DatasetValidationError(f'Could not read grayscale image: {path}')
+        if image.ndim != 2:
+            raise DatasetValidationError(f'Expected grayscale image at {path}, got shape {image.shape}')
+        return image
         
     def preload(self):
         idx = self.idx
@@ -164,9 +169,11 @@ class ImageReader(object):
                 continue
             
             for i in range(self.idx, self.idx + self.ahead):
+                if i >= len(self.ids):
+                    return
                 if self.timestamps[i] < self.starttime:
                     continue
-                if i not in self.cache and i < len(self.ids):
+                if i not in self.cache:
                     self.cache[i] = self.read(self.ids[i])
             if self.idx + self.ahead > len(self.ids):
                 return
@@ -214,14 +221,17 @@ class Stereo(object):
 
     def __iter__(self):
         for l, r in zip(self.cam0, self.cam1):
-            #assert abs(l.timestamp - r.timestamp) < 0.01, 'unsynced stereo pair'
+            if abs(l.timestamp - r.timestamp) > 1e-6:
+                raise DatasetValidationError(
+                    f'Unsynced stereo pair: cam0={l.timestamp:.9f}, '
+                    f'cam1={r.timestamp:.9f}')
             yield self.field(l.timestamp, l.image, r.image, l, r)
 
     def __len__(self):
         return len(self.cam0)
 
     def start_time(self):
-        return self.cam0.starttime
+        return self.cam0.start_time()
 
     def set_starttime(self, starttime):
         self.starttime = starttime

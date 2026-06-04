@@ -702,8 +702,8 @@ class MSCKF(object):
                 cam_state_pairs[cam_state_idx][1].orientation)
             
             distance = np.linalg.norm(position - key_position)
-            angle = 2 * np.arccos(to_quaternion(
-                rotation @ key_rotation.T)[-1])
+            cos_angle = np.clip(to_quaternion(rotation @ key_rotation.T)[-1], -1.0, 1.0)
+            angle = 2 * np.arccos(cos_angle)
 
             if angle < 0.2618 and distance < 0.4 and self.tracking_rate > 0.5:
                 rm_cam_state_ids.append(cam_state_pairs[cam_state_idx][0])

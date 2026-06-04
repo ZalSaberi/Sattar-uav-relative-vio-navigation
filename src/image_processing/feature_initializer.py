@@ -1,6 +1,7 @@
 import numpy as np
 from itertools import chain
 from .feature_meta_data import FeatureMetaData
+from .utils import grid_index
 
 class FeatureInitializer:
     def __init__(self,
@@ -53,6 +54,7 @@ class FeatureInitializer:
         cam0_points = [kp.pt for kp in kps]
 
         cam1_points, inlier_mask = self.stereo_match(cam0_points)
+        inlier_mask = np.asarray(inlier_mask).reshape(-1).astype(bool)
 
         cam0_inliers = []
         cam1_inliers = []
@@ -66,9 +68,9 @@ class FeatureInitializer:
 
         grid_feats = [[] for _ in range(self.config.grid_num)]
         for pt0, pt1, resp in zip(cam0_inliers, cam1_inliers, responses):
-            row = int(pt0[1] / grid_height)
-            col = int(pt0[0] / grid_width)
-            idx = row * self.grid_col + col
+            idx = grid_index(pt0, img.shape, self.grid_row, self.grid_col, grid_height, grid_width)
+            if idx is None:
+                continue
 
             fm = FeatureMetaData()
             fm.response   = resp

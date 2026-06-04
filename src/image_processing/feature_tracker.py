@@ -3,7 +3,7 @@ import cv2
 from itertools import chain
 
 from .feature_meta_data import FeatureMetaData
-from .utils import select
+from .utils import grid_index, select
 
 class FeatureTracker:
     def __init__(self,
@@ -106,13 +106,19 @@ class FeatureTracker:
             pred_pts,
             **self.lk_params
         )
+        if curr_pts is None or track_mask is None:
+            self.num_features['after_tracking'] = 0
+            return
+
+        curr_pts = np.asarray(curr_pts, dtype=np.float32).reshape(-1, 2)
+        track_mask = track_mask.reshape(-1).astype(bool)
 
         # 6) Отсечение выходящих за рамки
         for i, p in enumerate(curr_pts):
             if not track_mask[i]:
                 continue
-            if p[0] < 0 or p[0] > img.shape[1]-1 or p[1] < 0 or p[1] > img.shape[0]-1:
-                track_mask[i] = 0
+            if not np.isfinite(p).all() or p[0] < 0 or p[0] >= img.shape[1] or p[1] < 0 or p[1] >= img.shape[0]:
+                track_mask[i] = False
 
         # 7) Сбор оттрекиненных точек
         prev_tr_ids    = select(prev_ids, track_mask)
@@ -124,6 +130,7 @@ class FeatureTracker:
 
         # 8) Стерео матчинг
         curr_cam1_pts, match_mask = self.stereo_match(curr_tr_cam0)
+        match_mask = np.asarray(match_mask).reshape(-1).astype(bool)
         pm_ids   = select(prev_tr_ids,    match_mask)
         pm_life  = select(prev_tr_life,   match_mask)
         pm_cam0  = select(prev_tr_cam0,   match_mask)
@@ -141,9 +148,9 @@ class FeatureTracker:
             if not (cam0_inls[i] and cam1_inls[i]):
                 continue
             pt = cm_cam0[i]
-            row = int(pt[1] / grid_h)
-            col = int(pt[0] / grid_w)
-            idx = row * self.grid_col + col
+            idx = grid_index(pt, img.shape, self.grid_row, self.grid_col, grid_h, grid_w)
+            if idx is None:
+                continue
 
             fm = FeatureMetaData()
             fm.id         = pm_ids[i]

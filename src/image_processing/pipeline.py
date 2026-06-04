@@ -24,10 +24,15 @@ class ImageProcessingPipeline:
             config.fast_threshold
         )
 
-        self.camera_model = CameraModel(
+        self.cam0_camera_model = CameraModel(
             config.cam0_intrinsics,
             config.cam0_distortion_model,
             config.cam0_distortion_coeffs
+        )
+        self.cam1_camera_model = CameraModel(
+            config.cam1_intrinsics,
+            config.cam1_distortion_model,
+            config.cam1_distortion_coeffs
         )
 
         self.next_feature_id = 0
@@ -66,7 +71,8 @@ class ImageProcessingPipeline:
             self.config.lk_params,
             self.imu_processor,
             pyramid_builder,
-            self.camera_model,
+            self.cam0_camera_model,
+            self.cam1_camera_model,
             self.config.stereo_threshold
         )
 

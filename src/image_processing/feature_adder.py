@@ -3,6 +3,7 @@ import cv2
 
 from itertools import chain
 from .feature_meta_data import FeatureMetaData
+from .utils import clip_patch_bounds, grid_index
 
 class FeatureAdder:
     def __init__(self,
@@ -58,16 +59,19 @@ class FeatureAdder:
 
         mask = np.ones(curr_img.shape[:2], dtype='uint8')
         for feature in chain.from_iterable(self.curr_features):
-            x, y = map(int, feature.cam0_point)
-            mask[y-3:y+4, x-3:x+4] = 0
+            bounds = clip_patch_bounds(feature.cam0_point, curr_img.shape, radius=3)
+            if bounds is None:
+                continue
+            y0, y1, x0, x1 = bounds
+            mask[y0:y1, x0:x1] = 0
 
         new_features = self.detector.detect(curr_img, mask=mask)
 
         new_feature_sieve = [[] for _ in range(self.config.grid_num)]
         for kp in new_features:
-            row = int(kp.pt[1] / grid_height)
-            col = int(kp.pt[0] / grid_width)
-            code = row * self.grid_col + col
+            code = grid_index(kp.pt, curr_img.shape, self.grid_row, self.grid_col, grid_height, grid_width)
+            if code is None:
+                continue
             new_feature_sieve[code].append(kp)
 
         new_features = []
@@ -89,9 +93,9 @@ class FeatureAdder:
 
         grid_new_features = [[] for _ in range(self.config.grid_num)]
         for pt0, pt1, resp in zip(cam0_inliers, cam1_inliers, response_inliers):
-            row = int(pt0[1] / grid_height)
-            col = int(pt0[0] / grid_width)
-            code = row * self.grid_col + col
+            code = grid_index(pt0, curr_img.shape, self.grid_row, self.grid_col, grid_height, grid_width)
+            if code is None:
+                continue
 
             fm = FeatureMetaData()
             fm.response   = resp
