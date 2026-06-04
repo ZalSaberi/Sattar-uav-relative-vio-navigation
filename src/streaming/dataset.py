@@ -8,6 +8,50 @@ from collections import defaultdict, namedtuple
 from threading import Thread
 
 
+class DatasetValidationError(ValueError):
+    pass
+
+
+def validate_euroc_dataset(path):
+    dataset_path = os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+    missing = []
+
+    if not os.path.isdir(dataset_path):
+        raise DatasetValidationError(
+            f"Dataset path does not exist or is not a directory: {dataset_path}")
+
+    required_files = [
+        ('ground truth CSV', os.path.join(
+            dataset_path, 'mav0', 'state_groundtruth_estimate0', 'data.csv')),
+        ('IMU CSV', os.path.join(dataset_path, 'mav0', 'imu0', 'data.csv')),
+    ]
+    required_dirs = [
+        ('cam0 image directory', os.path.join(dataset_path, 'mav0', 'cam0', 'data')),
+        ('cam1 image directory', os.path.join(dataset_path, 'mav0', 'cam1', 'data')),
+    ]
+
+    for label, file_path in required_files:
+        if not os.path.isfile(file_path):
+            missing.append(f"- missing {label}: {file_path}")
+
+    for label, dir_path in required_dirs:
+        if not os.path.isdir(dir_path):
+            missing.append(f"- missing {label}: {dir_path}")
+            continue
+        pngs = [name for name in os.listdir(dir_path) if name.lower().endswith('.png')]
+        if not pngs:
+            missing.append(f"- no PNG images found in {label}: {dir_path}")
+
+    if missing:
+        details = "\n".join(missing)
+        raise DatasetValidationError(
+            "Invalid EuRoC dataset structure. Expected <dataset>/mav0 with "
+            "imu0/data.csv, state_groundtruth_estimate0/data.csv, cam0/data/*.png, "
+            f"and cam1/data/*.png.\n{details}")
+
+    return dataset_path
+
+
 
 class GroundTruthReader(object):
     def __init__(self, path, scaler, starttime=-float('inf')):
@@ -191,6 +235,7 @@ class EuRoCDataset(object):   # Stereo + IMU
     path example: 'path/to/your/EuRoC Mav Dataset/MH_01_easy'
     '''
     def __init__(self, path):
+        path = validate_euroc_dataset(path)
         self.groundtruth = GroundTruthReader(os.path.join(
             path, 'mav0', 'state_groundtruth_estimate0', 'data.csv'), 1e-9)
         self.imu = IMUDataReader(os.path.join(
@@ -215,6 +260,8 @@ class EuRoCDataset(object):   # Stereo + IMU
 
     def list_imgs(self, dir):
         xs = [_ for _ in os.listdir(dir) if _.endswith('.png')]
+        if not xs:
+            raise DatasetValidationError(f'No PNG images found in {dir}')
         xs = sorted(xs, key=lambda x:float(x[:-4]))
         timestamps = [float(_[:-4]) * 1e-9 for _ in xs]
         return [os.path.join(dir, _) for _ in xs], timestamps

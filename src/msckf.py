@@ -2,13 +2,13 @@ import time
 import os
 import numpy as np
 from scipy.stats import chi2
-from utils import *
-from feature import BaseFeature
-from feature import Feature
+from .utils import *
+from .feature import BaseFeature
+from .feature import Feature
 from collections import namedtuple
 
 def _make_output_filepath():
-    base = 'results/txts'
+    base = os.getenv('OUTPUT_DIR', os.path.join('results', 'txts'))
     os.makedirs(base, exist_ok=True)
     name   = os.getenv('DATASET_NAME', 'unknown')
     offset = os.getenv('TIME_OFFSET',  '0')
@@ -148,6 +148,14 @@ class MSCKF(object):
 
         self.is_first_img = True
         self._outfile = _make_output_filepath()
+        self._prepare_output_file()
+
+    def _prepare_output_file(self):
+        append_output = os.getenv('APPEND_OUTPUT', '0').lower() in ('1', 'true', 'yes')
+        if append_output and os.path.exists(self._outfile):
+            return
+        with open(self._outfile, 'w') as f:
+            f.write('# timestamp p_x p_y p_z q_x q_y q_z q_w\n')
 
     def _write_state(self, imu_state):
         line = (
