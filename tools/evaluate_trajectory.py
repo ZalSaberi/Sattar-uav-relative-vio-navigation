@@ -41,6 +41,12 @@ def parse_args():
     parser.add_argument(
         '--plot',
         help='Optional output PNG with XY trajectory and translation error plots. Requires matplotlib.')
+    parser.add_argument(
+        '--rpe-delta-seconds', type=float, default=1.0,
+        help='Compute translation RPE over this time delta in seconds. Default: 1.0.')
+    parser.add_argument(
+        '--no-rpe', action='store_true',
+        help='Skip translation RPE computation.')
     return parser.parse_args()
 
 
@@ -216,6 +222,43 @@ def compute_metrics(errors):
     }, norms
 
 
+def compute_rpe_translation(times, estimate_aligned, groundtruth, delta_seconds):
+    if delta_seconds is None:
+        return None
+    if delta_seconds <= 0:
+        raise EvaluationError('--rpe-delta-seconds must be positive')
+
+    times = np.asarray(times, dtype=float)
+    estimate_aligned = np.asarray(estimate_aligned, dtype=float)
+    groundtruth = np.asarray(groundtruth, dtype=float)
+
+    errors = []
+    for i, timestamp in enumerate(times):
+        j = int(np.searchsorted(times, timestamp + delta_seconds, side='left'))
+        if j >= len(times):
+            continue
+        if j == i:
+            continue
+        estimate_delta = estimate_aligned[j] - estimate_aligned[i]
+        gt_delta = groundtruth[j] - groundtruth[i]
+        errors.append(estimate_delta - gt_delta)
+
+    if not errors:
+        return {
+            'delta_seconds': delta_seconds,
+            'pairs': 0,
+            'metrics': None,
+        }
+
+    metrics, norms = compute_metrics(np.asarray(errors, dtype=float))
+    return {
+        'delta_seconds': delta_seconds,
+        'pairs': len(errors),
+        'metrics': metrics,
+        'errors_m': norms,
+    }
+
+
 def maybe_limit_samples(times, estimate, groundtruth, max_samples):
     if max_samples is None or len(times) <= max_samples:
         return times, estimate, groundtruth
@@ -277,59 +320,118 @@ def write_plot(path, times, estimate_aligned, groundtruth, error_norms):
     plt.close(fig)
 
 
-def print_summary(args, estimate_path, groundtruth_path, estimate_t, gt_t, aligned_t,
-                  metrics, scale, rotation, translation):
+def print_summary(result):
+    metrics = result['ate']
+    rpe = result['rpe']
     print('Trajectory evaluation')
-    print(f'  estimate:    {estimate_path}')
-    print(f'  groundtruth: {groundtruth_path}')
-    print(f'  alignment:   {args.align}')
-    print(f'  samples:     estimate={len(estimate_t)} groundtruth={len(gt_t)} aligned={len(aligned_t)}')
-    print(f'  time range:  estimate={estimate_t[0]:.6f}..{estimate_t[-1]:.6f}')
-    print(f'               groundtruth={gt_t[0]:.6f}..{gt_t[-1]:.6f}')
-    print(f'               aligned={aligned_t[0]:.6f}..{aligned_t[-1]:.6f}')
+    print(f'  estimate:    {result["estimate_path"]}')
+    print(f'  groundtruth: {result["groundtruth_path"]}')
+    print(f'  alignment:   {result["alignment"]}')
+    print('  samples:     '
+          f'estimate={result["estimate_samples"]} '
+          f'groundtruth={result["groundtruth_samples"]} '
+          f'aligned={result["aligned_samples"]}')
+    print('  time range:  '
+          f'estimate={result["estimate_start"]:.6f}..{result["estimate_end"]:.6f}')
+    print('               '
+          f'groundtruth={result["groundtruth_start"]:.6f}..{result["groundtruth_end"]:.6f}')
+    print('               '
+          f'aligned={result["aligned_start"]:.6f}..{result["aligned_end"]:.6f}')
     print('  transform estimate->groundtruth:')
-    print(f'    scale: {scale:.9f}')
+    print(f'    scale: {result["scale"]:.9f}')
+    translation = result['translation']
     print(f'    translation: {translation[0]:.9f} {translation[1]:.9f} {translation[2]:.9f}')
-    print(f'    rotation det: {np.linalg.det(rotation):.9f}')
-    print('  translation error [m]:')
+    print(f'    rotation det: {result["rotation_det"]:.9f}')
+    print('  ATE translation error [m]:')
     print(f'    rmse:   {metrics["rmse_m"]:.6f}')
     print(f'    mean:   {metrics["mean_m"]:.6f}')
     print(f'    median: {metrics["median_m"]:.6f}')
     print(f'    std:    {metrics["std_m"]:.6f}')
     print(f'    min:    {metrics["min_m"]:.6f}')
     print(f'    max:    {metrics["max_m"]:.6f}')
+    if rpe is not None:
+        print(f'  RPE translation error over {rpe["delta_seconds"]:.3f}s [m]:')
+        if rpe['metrics'] is None:
+            print('    not enough aligned pairs')
+        else:
+            rpe_metrics = rpe['metrics']
+            print(f'    pairs:  {rpe["pairs"]}')
+            print(f'    rmse:   {rpe_metrics["rmse_m"]:.6f}')
+            print(f'    mean:   {rpe_metrics["mean_m"]:.6f}')
+            print(f'    median: {rpe_metrics["median_m"]:.6f}')
+            print(f'    max:    {rpe_metrics["max_m"]:.6f}')
 
 
-def evaluate(args):
-    estimate_path = require_file(args.estimate, 'Estimate')
-    groundtruth_path = groundtruth_path_from_args(args)
-
+def evaluate_files(estimate_path, groundtruth_path, align='se3', max_samples=None,
+                   rpe_delta_seconds=1.0):
+    estimate_path = require_file(estimate_path, 'Estimate')
+    groundtruth_path = require_file(groundtruth_path, 'Ground truth')
     estimate_t, estimate_p, _ = read_estimate(estimate_path)
     gt_t, gt_p, _ = read_groundtruth(groundtruth_path)
     valid, aligned_t, aligned_gt = interpolate_groundtruth(gt_t, gt_p, estimate_t)
     aligned_estimate = estimate_p[valid]
     aligned_t, aligned_estimate, aligned_gt = maybe_limit_samples(
-        aligned_t, aligned_estimate, aligned_gt, args.max_samples)
+        aligned_t, aligned_estimate, aligned_gt, max_samples)
 
-    if len(aligned_t) < 3 and args.align in ('se3', 'sim3'):
+    if len(aligned_t) < 3 and align in ('se3', 'sim3'):
         raise EvaluationError(
-            f'Need at least 3 aligned samples for {args.align} alignment; got {len(aligned_t)}')
+            f'Need at least 3 aligned samples for {align} alignment; got {len(aligned_t)}')
 
-    scale, rotation, translation = fit_alignment(aligned_estimate, aligned_gt, args.align)
+    scale, rotation, translation = fit_alignment(aligned_estimate, aligned_gt, align)
     estimate_aligned = apply_alignment(aligned_estimate, scale, rotation, translation)
     metrics, error_norms = compute_metrics(estimate_aligned - aligned_gt)
+    rpe = compute_rpe_translation(
+        aligned_t, estimate_aligned, aligned_gt, rpe_delta_seconds)
 
-    print_summary(
-        args, estimate_path, groundtruth_path, estimate_t, gt_t, aligned_t,
-        metrics, scale, rotation, translation)
+    return {
+        'estimate_path': str(estimate_path),
+        'groundtruth_path': str(groundtruth_path),
+        'alignment': align,
+        'estimate_samples': len(estimate_t),
+        'groundtruth_samples': len(gt_t),
+        'aligned_samples': len(aligned_t),
+        'estimate_start': float(estimate_t[0]),
+        'estimate_end': float(estimate_t[-1]),
+        'groundtruth_start': float(gt_t[0]),
+        'groundtruth_end': float(gt_t[-1]),
+        'aligned_start': float(aligned_t[0]),
+        'aligned_end': float(aligned_t[-1]),
+        'scale': scale,
+        'rotation_det': float(np.linalg.det(rotation)),
+        'translation': translation,
+        'ate': metrics,
+        'rpe': rpe,
+        'aligned_times': aligned_t,
+        'estimate_aligned': estimate_aligned,
+        'groundtruth_aligned': aligned_gt,
+        'ate_errors_m': error_norms,
+    }
+
+
+def evaluate(args):
+    estimate_path = require_file(args.estimate, 'Estimate')
+    groundtruth_path = groundtruth_path_from_args(args)
+    rpe_delta_seconds = None if args.no_rpe else args.rpe_delta_seconds
+
+    result = evaluate_files(
+        estimate_path, groundtruth_path, args.align, args.max_samples,
+        rpe_delta_seconds)
+
+    print_summary(result)
 
     if args.csv:
-        write_aligned_csv(args.csv, aligned_t, estimate_aligned, aligned_gt, error_norms)
+        write_aligned_csv(
+            args.csv, result['aligned_times'], result['estimate_aligned'],
+            result['groundtruth_aligned'], result['ate_errors_m'])
         print(f'  wrote CSV: {args.csv}')
 
     if args.plot:
-        write_plot(args.plot, aligned_t, estimate_aligned, aligned_gt, error_norms)
+        write_plot(
+            args.plot, result['aligned_times'], result['estimate_aligned'],
+            result['groundtruth_aligned'], result['ate_errors_m'])
         print(f'  wrote plot: {args.plot}')
+
+    return result
 
 
 def main():
