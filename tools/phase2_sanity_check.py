@@ -1,7 +1,10 @@
 from pathlib import Path
 import sys
+import os
+import tempfile
 
 import numpy as np
+from scipy.stats import chi2
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +13,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.image_processing.stereo_matcher import StereoMatcher
 from src.image_processing.utils import clip_patch_bounds, grid_index, select
+from src.config import ConfigEuRoC
+from src.feature.feature_depth_estimator import FeatureDepthEstimator
+from src.feature.utils import Isometry3d
+from src.msckf import MSCKF
 
 
 def assert_close(actual, expected, name):
@@ -20,6 +27,16 @@ def assert_close(actual, expected, name):
 def assert_equal(actual, expected, name):
     if actual != expected:
         raise AssertionError(f'{name}: expected {expected}, got {actual}')
+
+
+def assert_true(value, name):
+    if not value:
+        raise AssertionError(name)
+
+
+def assert_false(value, name):
+    if value:
+        raise AssertionError(name)
 
 
 def main():
@@ -50,7 +67,35 @@ def main():
         ['a', 'c'],
         'flattened selector handling')
 
-    print('Phase 2 sanity checks passed')
+    degenerate_depth = FeatureDepthEstimator().generate_initial_guess(
+        Isometry3d(np.identity(3), np.zeros(3)),
+        np.array([0.0, 0.0]),
+        np.array([0.0, 0.0]))
+    assert_equal(degenerate_depth, None, 'degenerate depth guard')
+
+    old_env = {key: os.environ.get(key) for key in
+               ('OUTPUT_DIR', 'DATASET_NAME', 'TIME_OFFSET', 'APPEND_OUTPUT')}
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ['OUTPUT_DIR'] = tmp
+        os.environ['DATASET_NAME'] = 'sanity'
+        os.environ['TIME_OFFSET'] = '0'
+        os.environ['APPEND_OUTPUT'] = '0'
+        msckf = MSCKF(ConfigEuRoC())
+    for key, value in old_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+    assert_close(
+        msckf.chi_squared_test_table[5],
+        chi2.ppf(0.95, 5),
+        'chi-square 0.95 confidence')
+    H = np.zeros((5, msckf.state_server.state_cov.shape[0]))
+    assert_true(msckf.gating_test(H, np.zeros(5)), 'zero residual gate')
+    assert_false(msckf.gating_test(H, np.ones(5) * 100.0), 'large residual gate')
+
+    print('Phase 2/3A sanity checks passed')
 
 
 if __name__ == '__main__':

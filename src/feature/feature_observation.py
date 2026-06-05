@@ -7,7 +7,11 @@ class FeatureObservation:
         """
         alpha, beta, rho = x
         h = T_c0_ci.R @ np.array([alpha, beta, 1.0]) + rho * T_c0_ci.t
+        if not np.all(np.isfinite(h)) or h[2] <= 1e-6 or not np.all(np.isfinite(z)):
+            return float('inf')
         z_hat = h[:2] / h[2]
+        if not np.all(np.isfinite(z_hat)):
+            return float('inf')
         e = ((z_hat - z)**2).sum()
         return e
 
@@ -17,6 +21,8 @@ class FeatureObservation:
         """
         alpha, beta, rho = x
         h = T_c0_ci.R @ np.array([alpha, beta, 1.0]) + rho * T_c0_ci.t
+        if not np.all(np.isfinite(h)) or h[2] <= 1e-6 or not np.all(np.isfinite(z)):
+            return None, None, None
         h1, h2, h3 = h
 
         W = np.zeros((3, 3))
@@ -29,6 +35,8 @@ class FeatureObservation:
 
         z_hat = np.array([h1/h3, h2/h3])
         r = z_hat - z
+        if not np.all(np.isfinite(J)) or not np.all(np.isfinite(r)):
+            return None, None, None
 
         e = np.linalg.norm(r)
         if e <= self.optimization_config.huber_epsilon:

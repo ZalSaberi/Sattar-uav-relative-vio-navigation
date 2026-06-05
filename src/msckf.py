@@ -109,8 +109,8 @@ class MSCKF(object):
         # Таблица критических значений chi-квадрат.
         # Инициализируется для доверительного уровня 0.95.
         self.chi_squared_test_table = dict()
-        for i in range(1, 100):
-            self.chi_squared_test_table[i] = chi2.ppf(0.05, i)
+        for i in range(1, 200):
+            self.chi_squared_test_table[i] = chi2.ppf(0.95, i)
 
         # Устанавливает начальное состояние IMU.
         # Начальная ориентация и положение задаются равными нулю по умолчанию.
@@ -472,6 +472,14 @@ class MSCKF(object):
         # Преобразует положение признака из мировой системы в системы cam0 и cam1.
         p_c0 = R_w_c0 @ (p_w - t_c0_w)
         p_c1 = R_w_c1 @ (p_w - t_c1_w)
+        min_depth = 1e-6
+        if (not np.all(np.isfinite(p_c0)) or
+            not np.all(np.isfinite(p_c1)) or
+            not np.all(np.isfinite(z)) or
+            p_c0[2] <= min_depth or
+            p_c1[2] <= min_depth):
+            # Invalid depth would create NaN/Inf residuals and corrupt the filter.
+            return None, None, None
 
         dz_dpc0 = np.zeros((4, 3))
         dz_dpc0[0, 0] = 1 / p_c0[2]
@@ -538,6 +546,8 @@ class MSCKF(object):
         stack_count = 0
         for cam_id in valid_cam_state_ids:
             H_xi, H_fi, r_i = self.measurement_jacobian(cam_id, feature.id)
+            if H_xi is None:
+                continue
 
             idx = list(self.state_server.cam_states.keys()).index(cam_id)
             H_xj[stack_count:stack_count+4, 21+6*idx:21+6*(idx+1)] = H_xi
@@ -545,16 +555,26 @@ class MSCKF(object):
             r_j[stack_count:stack_count+4] = r_i
             stack_count += 4
 
+        H_xj = H_xj[:stack_count]
+        H_fj = H_fj[:stack_count]
+        r_j = r_j[:stack_count]
+        if stack_count <= 3 or not np.all(np.isfinite(H_xj)) or not np.all(np.isfinite(r_j)):
+            return np.empty((0, H_xj.shape[1])), np.empty(0)
+
         U, _, _ = np.linalg.svd(H_fj)
         A = U[:, 3:]
 
         H_x = A.T @ H_xj
         r = A.T @ r_j
+        if not np.all(np.isfinite(H_x)) or not np.all(np.isfinite(r)):
+            return np.empty((0, H_xj.shape[1])), np.empty(0)
 
         return H_x, r
 
     def measurement_update(self, H, r):
         if len(H) == 0 or len(r) == 0:
+            return
+        if not np.all(np.isfinite(H)) or not np.all(np.isfinite(r)):
             return
 
         # Декомпозирует итоговую матрицу якобиана для снижения вычислительной сложности
@@ -570,10 +590,15 @@ class MSCKF(object):
         P = self.state_server.state_cov
         S = H_thin @ P @ H_thin.T + (self.config.observation_noise * 
             np.identity(len(H_thin)))
-        K_transpose = np.linalg.solve(S, H_thin @ P)
+        try:
+            K_transpose = np.linalg.solve(S, H_thin @ P)
+        except np.linalg.LinAlgError:
+            return
         K = K_transpose.T   # shape (N, K)
 
         delta_x = K @ r_thin
+        if not np.all(np.isfinite(delta_x)):
+            return
 
         delta_x_imu = delta_x[:21]
 
@@ -609,12 +634,25 @@ class MSCKF(object):
 
         self.state_server.state_cov = (state_cov + state_cov.T) / 2.
 
-    def gating_test(self, H, r, dof):
+    def gating_test(self, H, r):
+        if len(H) == 0 or len(r) == 0:
+            return False
+        if not np.all(np.isfinite(H)) or not np.all(np.isfinite(r)):
+            return False
+
+        dof = len(r)
         P1 = H @ self.state_server.state_cov @ H.T
         P2 = self.config.observation_noise * np.identity(len(H))
-        gamma = r @ np.linalg.solve(P1+P2, r)
+        try:
+            gamma = r @ np.linalg.solve(P1+P2, r)
+        except np.linalg.LinAlgError:
+            return False
+        if not np.isfinite(gamma):
+            return False
 
-        if(gamma < self.chi_squared_test_table[dof]):
+        threshold = self.chi_squared_test_table.get(dof, chi2.ppf(0.95, dof))
+
+        if(gamma < threshold):
             return True
         else:
             return False
@@ -667,7 +705,7 @@ class MSCKF(object):
 
             H_xj, r_j = self.feature_jacobian(feature.id, cam_state_ids)
 
-            if self.gating_test(H_xj, r_j, len(cam_state_ids)-1):
+            if self.gating_test(H_xj, r_j):
                 H_x[stack_count:stack_count+H_xj.shape[0], :H_xj.shape[1]] = H_xj
                 r[stack_count:stack_count+len(r_j)] = r_j
                 stack_count += H_xj.shape[0]
@@ -766,7 +804,7 @@ class MSCKF(object):
 
             H_xj, r_j = self.feature_jacobian(feature.id, involved_cam_state_ids)
 
-            if self.gating_test(H_xj, r_j, len(involved_cam_state_ids)):
+            if self.gating_test(H_xj, r_j):
                 H_x[stack_count:stack_count+H_xj.shape[0], :H_xj.shape[1]] = H_xj
                 r[stack_count:stack_count+len(r_j)] = r_j
                 stack_count += H_xj.shape[0]

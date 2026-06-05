@@ -9,7 +9,17 @@ class FeatureDepthEstimator:
         m = T_c1_c2.R @ np.array([*z1, 1.0])
         a = m[:2] - z2*m[2]
         b = z2*T_c1_c2.t[2] - T_c1_c2.t[:2]
+        denom = a @ a
+        if (not np.all(np.isfinite(m)) or
+            not np.all(np.isfinite(a)) or
+            not np.all(np.isfinite(b)) or
+            denom <= 1e-12):
+            return None
 
-        depth = a @ b / (a @ a)
+        depth = a @ b / denom
+        if not np.isfinite(depth) or depth <= 1e-6:
+            return None
         p = np.array([*z1, 1.0]) * depth
+        if not np.all(np.isfinite(p)):
+            return None
         return p
