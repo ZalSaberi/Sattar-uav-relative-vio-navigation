@@ -1207,9 +1207,11 @@ def create_dashboard_classes():
                 creator_grid.addWidget(value, row, 1)
 
             add_creator_row(0, 'Developer', 'Sara Saberi')
-            add_creator_row(1, 'Project', 'UAV-Airvision Dashboard')
-            add_creator_row(2, 'GitHub', 'github.com/ZalSaberi/...')
-            add_creator_row(3, 'Email', 'YOUR_EMAIL_HERE')
+            add_creator_row(1, 'Project', 'UAV-vio-navigation')
+            add_creator_row(2, 'GitHub', 'github.com/ZalSaberi')
+            add_creator_row(3, 'Email', 'Zal.saberi.s@gmail.com')
+            add_creator_row(4, 'Linkedin', 'linkedin.com/in/saberisara')
+
 
             creator_grid.setColumnStretch(0, 0)
             creator_grid.setColumnStretch(1, 1)
@@ -2167,7 +2169,10 @@ def create_dashboard_classes():
             estimate = result.estimate_aligned
             groundtruth = result.groundtruth_interpolated
             ate_errors = result.error_norms
-            self.live_view.set_groundtruth_preview(groundtruth)
+            if hasattr(self.live_view, 'set_final_trajectory'):
+                self.live_view.set_final_trajectory(estimate, groundtruth)
+            else:
+                self.live_view.set_groundtruth_preview(groundtruth)
             self.live_view.set_evaluation_curves(
                 times,
                 ate_errors,

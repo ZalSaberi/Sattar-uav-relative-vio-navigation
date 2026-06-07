@@ -56,6 +56,7 @@ class LiveRunView(QtWidgets.QWidget):
         self._draw_count = 0
         self._t0 = time.time()
         self._running = False
+        self._final_trajectory_mode = False
 
         self._image_executor = ThreadPoolExecutor(max_workers=1)
         self._image_notifier = _ImageLoadNotifier()
@@ -263,6 +264,7 @@ class LiveRunView(QtWidgets.QWidget):
         self._image_draw_times.clear()
         self._t0 = time.time()
         self._running = True
+        self._final_trajectory_mode = False
 
         self._clear_trajectory()
         self.draw_evaluation_placeholders()
@@ -311,21 +313,93 @@ class LiveRunView(QtWidgets.QWidget):
         relative = raw - self._origin_position
         self._pose_queue.append((float(timestamp), relative))
 
+    def _to_xyz_array(self, values):
+        values = np.asarray(values, dtype=float)
+
+        if values.ndim != 2 or len(values) < 1:
+            return np.zeros((0, 3), dtype=np.float32)
+
+        if values.shape[1] == 2:
+            z = np.zeros((len(values), 1), dtype=float)
+            values = np.hstack([values[:, :2], z])
+        elif values.shape[1] >= 3:
+            values = values[:, :3]
+        else:
+            return np.zeros((0, 3), dtype=np.float32)
+
+        finite = np.all(np.isfinite(values), axis=1)
+        values = values[finite]
+        return values.astype(np.float32)
+
+    def set_final_trajectory(self, estimate, groundtruth):
+        """
+        Show the final evaluated trajectory pair in the 3D Live View.
+
+        Red: estimate_aligned
+        Green: groundtruth_interpolated
+
+        Both are normalized with the same origin, so the visual comparison is
+        meaningful and the green/red paths do not drift apart because of
+        different local origins.
+        """
+        estimate = self._to_xyz_array(estimate)
+        groundtruth = self._to_xyz_array(groundtruth)
+
+        if len(estimate) < 2 or len(groundtruth) < 2:
+            self._clear_trajectory()
+            return
+
+        count = min(len(estimate), len(groundtruth))
+        estimate = estimate[:count]
+        groundtruth = groundtruth[:count]
+
+        # Use one shared origin. Since estimate is already aligned to groundtruth
+        # by evaluate_trajectory, this preserves the real visual error while
+        # putting the pair near the coordinate origin.
+        origin = groundtruth[0].copy()
+        estimate_rel = estimate - origin
+        groundtruth_rel = groundtruth - origin
+
+        estimate_rel = self._sample_positions(estimate_rel, max_points=2600).astype(np.float32)
+        groundtruth_rel = self._sample_positions(groundtruth_rel, max_points=2600).astype(np.float32)
+
+        self._positions.clear()
+        self._timestamps.clear()
+        self._pose_queue.clear()
+        self._pose_count = len(estimate_rel)
+        self._final_trajectory_mode = True
+
+        if HAS_GL:
+            self.live_line.setData(pos=estimate_rel)
+            self.gt_line.setData(pos=groundtruth_rel)
+            self.head_point.setData(pos=estimate_rel[-1:].astype(np.float32))
+
+            combined = np.vstack([
+                estimate_rel,
+                groundtruth_rel,
+                np.zeros((1, 3), dtype=np.float32),
+            ])
+            self._update_3d_camera_and_origin(combined)
+        else:
+            self.live_curve_2d.setData(estimate_rel[:, 0], estimate_rel[:, 1])
+            self.head_curve_2d.setData([estimate_rel[-1, 0]], [estimate_rel[-1, 1]])
+            self.gt_curve_2d.setData(groundtruth_rel[:, 0], groundtruth_rel[:, 1])
+
+        self.traj_title.setText(
+            'Final Aligned 3D Trajectory | red=estimate, green=ground truth'
+            if HAS_GL else
+            'Final Aligned Trajectory | red=estimate, green=ground truth'
+        )
+
     def set_groundtruth_preview(self, positions):
-        positions = np.asarray(positions, dtype=float)
-        if positions.ndim != 2 or len(positions) < 2:
+        positions = self._to_xyz_array(positions)
+        if len(positions) < 2:
             self._set_gt_line(np.zeros((0, 3), dtype=np.float32))
             return
 
-        if positions.shape[1] == 2:
-            z = np.zeros((len(positions), 1), dtype=float)
-            positions = np.hstack([positions[:, :2], z])
-        else:
-            positions = positions[:, :3]
-
         positions = positions - positions[0]
-        positions = self._sample_positions(positions, max_points=1800)
-        self._set_gt_line(positions.astype(np.float32))
+        positions = self._sample_positions(positions, max_points=1800).astype(np.float32)
+        self._set_gt_line(positions)
 
     def draw_evaluation_placeholders(self):
         self.ate_curve.setData([], [])
@@ -547,6 +621,15 @@ class LiveRunView(QtWidgets.QWidget):
     def _update_fps_title(self):
         fps = self._display_fps()
         self.camera_title.setText(f'Camera: cam0 (live) - FPS {fps:.1f}')
+
+        if getattr(self, '_final_trajectory_mode', False):
+            self.traj_title.setText(
+                f'Final Aligned 3D Trajectory | samples {self._pose_count} | origin (0,0,0)'
+                if HAS_GL else
+                f'Final Aligned Trajectory | samples {self._pose_count}'
+            )
+            return
+
         self.traj_title.setText(
             f'Trajectory 3D - Live | poses {self._pose_count} | origin (0,0,0)'
             if HAS_GL else
