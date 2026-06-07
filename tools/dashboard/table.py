@@ -307,33 +307,33 @@ def configure_results_table(table):
     viewport.setStyleSheet(f'background-color: {DARK_VIEWPORT};')
 
     header = table.horizontalHeader()
-    header.setStretchLastSection(False)
+    header.setStretchLastSection(True)
     header.setHighlightSections(False)
     header.setSectionsClickable(False)
     header.setDefaultAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
 
     fixed_columns = {
-        0: 88,    # Dataset
-        1: 72,    # Status
-        2: 180,   # Output, elided with tooltip
-        3: 74,    # ATE RMSE
-        4: 66,    # RPE 1s
-        5: 74,    # ATE Mean
-        6: 58,    # Aligned
-        7: 64,    # Overlap
+        0: 78,    # Dataset
+        1: 76,    # Status
+        3: 76,    # ATE RMSE
+        4: 74,    # RPE 1s
+        5: 76,    # ATE Mean
+        6: 78,    # Aligned
+        7: 70,    # Overlap
     }
 
     for column, width in fixed_columns.items():
         header.setSectionResizeMode(column, QtWidgets.QHeaderView.Fixed)
         table.setColumnWidth(column, width)
 
-    header.setStretchLastSection(False)
+    header.setStretchLastSection(True)
 
 
 
     table.verticalHeader().setDefaultSectionSize(24)
     table.verticalHeader().setMinimumSectionSize(24)
 
+    header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
     return table
 
 

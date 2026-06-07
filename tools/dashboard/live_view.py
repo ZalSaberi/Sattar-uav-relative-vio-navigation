@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 
 import cv2
+cv2.setNumThreads(1)
 import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
@@ -263,6 +264,7 @@ class LiveRunView(QtWidgets.QWidget):
 
         layout.addWidget(self.traj_title)
         layout.addWidget(self.traj_widget, 1)
+        self.traj_widget.setToolTip('')
 
         inspector = QtWidgets.QFrame()
         inspector.setObjectName('TrajectoryInspector')
@@ -489,9 +491,6 @@ class LiveRunView(QtWidgets.QWidget):
         if hasattr(self, 'inspector_label'):
             self.inspector_label.setText(visible_text)
             self.inspector_label.setToolTip(full_text)
-
-        if hasattr(self, 'traj_widget'):
-            self.traj_widget.setToolTip(full_text)
         if hasattr(self, 'traj_title'):
             self.traj_title.setToolTip(full_text)
 
@@ -813,7 +812,7 @@ class LiveRunView(QtWidgets.QWidget):
             self._redraw_live_path()
             self._last_pose_draw_at = now
 
-        if now - self._last_title_update_at >= 0.35:
+        if now - self._last_title_update_at >= 0.25:
             self._update_fps_title()
             self._last_title_update_at = now
 
@@ -845,16 +844,17 @@ class LiveRunView(QtWidgets.QWidget):
     def _on_image_loaded(self, path, image):
         self._image_load_busy = False
 
-        if self._pending_image_path is not None and self._pending_image_path != path:
-            self._start_image_load_if_idle()
-            return
-
         if image is None:
-            self.set_message(f'Could not load frame: {path}')
+            if path == self._last_image_path:
+                self.set_message(f'Could not load frame: {path}')
         else:
+            # Display the loaded frame even if a newer request is already pending.
+            # This avoids long visual gaps when the preview requests frames faster
+            # than disk decoding can complete.
             self._display_image(image, path)
 
         self._start_image_load_if_idle()
+
 
     def _drain_image_queue(self):
         if not self._image_queue:
@@ -1057,6 +1057,8 @@ class LiveRunView(QtWidgets.QWidget):
 
     def eventFilter(self, obj, event):
         if obj is getattr(self, 'traj_widget', None):
+            if event.type() == QtCore.QEvent.ToolTip:
+                return True
             if event.type() == QtCore.QEvent.MouseButtonPress:
                 if event.button() == QtCore.Qt.RightButton:
                     self._clear_data_cursor()

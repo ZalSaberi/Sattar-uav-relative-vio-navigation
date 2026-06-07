@@ -474,6 +474,78 @@ def validate_data_flow(args):
     return 0 if evaluated > 0 and mismatches == 0 else 1
 
 
+
+
+def _style_mpl_toolbar_readable_buttons(root):
+    """
+    Keep Matplotlib's original toolbar icons.
+    Only style the button background so the original dark icons are visible.
+    """
+    try:
+        from PyQt5 import QtCore, QtWidgets
+
+        toolbars = root.findChildren(QtWidgets.QToolBar)
+
+        for toolbar in toolbars:
+            action_text = ' '.join(
+                str(action.text() or '') + ' ' + str(action.toolTip() or '')
+                for action in toolbar.actions()
+            ).lower()
+
+            if not any(
+                key in action_text
+                for key in ['home', 'back', 'forward', 'pan', 'zoom', 'save', 'subplots']
+            ):
+                continue
+
+            toolbar.setIconSize(QtCore.QSize(16, 16))
+            toolbar.setStyleSheet(
+                'QToolBar {'
+                'background: #0B1322;'
+                'border: 0px;'
+                'spacing: 5px;'
+                'padding: 2px;'
+                '}'
+                'QToolButton {'
+                'color: #0B1322;'
+                'background: #EAF2FF;'
+                'border: 1px solid #CBD5E1;'
+                'border-radius: 5px;'
+                'padding: 2px;'
+                'margin: 1px;'
+                '}'
+                'QToolButton:hover {'
+                'background: #FFFFFF;'
+                'border: 1px solid #3D6DFF;'
+                '}'
+                'QToolButton:pressed {'
+                'background: #BFDBFE;'
+                'border: 1px solid #2563EB;'
+                '}'
+                'QToolButton:checked {'
+                'background: #93C5FD;'
+                'border: 1px solid #2563EB;'
+                '}'
+                'QToolButton:disabled {'
+                'background: #1E293B;'
+                'border: 1px solid #334155;'
+                'color: #64748B;'
+                '}'
+            )
+
+            for button in toolbar.findChildren(QtWidgets.QToolButton):
+                button.setIconSize(QtCore.QSize(16, 16))
+                button.setFixedSize(24, 24)
+                button.setAutoRaise(False)
+                button.setCursor(QtCore.Qt.PointingHandCursor)
+                button.update()
+
+            toolbar.update()
+
+    except Exception:
+        pass
+
+
 def create_dashboard_classes():
     from dashboard.table import (
         DarkResultsTable,
@@ -727,6 +799,60 @@ def create_dashboard_classes():
             layout.addWidget(self.canvas, 1)
             self.draw_empty('No evaluated trajectory yet')
 
+        def _polish_toolbar_icons(self, toolbar):
+            try:
+                from PyQt5 import QtCore as _QtCore
+                from PyQt5 import QtGui as _QtGui
+                from PyQt5 import QtWidgets as _QtWidgets
+
+                toolbar.setIconSize(_QtCore.QSize(16, 16))
+                toolbar.setStyleSheet(
+                    'QToolBar {'
+                    'background: #0B1322;'
+                    'border: 0px;'
+                    'spacing: 4px;'
+                    '}'
+                    'QToolButton {'
+                    'color: #EAF2FF;'
+                    'background: transparent;'
+                    'border: 1px solid transparent;'
+                    'border-radius: 5px;'
+                    'padding: 2px;'
+                    '}'
+                    'QToolButton:hover {'
+                    'background: #16304F;'
+                    'border: 1px solid #3D6DFF;'
+                    '}'
+                    'QToolButton:pressed {'
+                    'background: #1B3C66;'
+                    '}'
+                )
+
+                for action in toolbar.actions():
+                    icon = action.icon()
+                    if icon.isNull():
+                        continue
+
+                    pixmap = icon.pixmap(18, 18)
+                    if pixmap.isNull():
+                        continue
+
+                    tinted = _QtGui.QPixmap(pixmap.size())
+                    tinted.fill(_QtCore.Qt.transparent)
+
+                    painter = _QtGui.QPainter(tinted)
+                    painter.drawPixmap(0, 0, pixmap)
+                    painter.setCompositionMode(_QtGui.QPainter.CompositionMode_SourceIn)
+                    painter.fillRect(tinted.rect(), _QtGui.QColor('#EAF2FF'))
+                    painter.end()
+
+                    action.setIcon(_QtGui.QIcon(tinted))
+
+                for button in toolbar.findChildren(_QtWidgets.QToolButton):
+                    button.setAutoRaise(True)
+            except Exception:
+                pass
+
         def draw_empty(self, message):
             self.figure.clear()
             ax = self.figure.add_subplot(111)
@@ -897,6 +1023,12 @@ def create_dashboard_classes():
             self.camera_frame_index = -1
             self.run_started_at = None
             self.preview_frames_shown = 0
+            self.preview_target_fps = 10.0
+            self._last_preview_status_update = 0.0
+            self._last_preview_tick = 0.0
+            self._last_pose_status_update = 0.0
+            self._last_log_flush_at = 0.0
+            self._log_flush_pending = False
             self._last_stdout_timestamp = None
             self.updating_table = False
             self.suppress_auto_evaluate = False
@@ -904,16 +1036,20 @@ def create_dashboard_classes():
 
             self.setWindowTitle('UAV-Airvision Evaluation Dashboard')
             self._build_ui()
+            QtCore.QTimer.singleShot(250, lambda: _style_mpl_toolbar_readable_buttons(self))
             self._apply_theme()
+            QtCore.QTimer.singleShot(250, lambda: _style_mpl_toolbar_readable_buttons(self))
+            QtCore.QTimer.singleShot(900, lambda: _style_mpl_toolbar_readable_buttons(self))
             self._harden_summary_table_surface()
             self._lock_to_available_geometry()
             self._load_metrics()
+            QtCore.QTimer.singleShot(250, lambda: _style_mpl_toolbar_readable_buttons(self))
             self._set_running_buttons(False)
             self._set_run_status('Idle', COLORS['muted'])
             self._set_eval_status('Missing Output', COLORS['orange'])
 
             self.preview_timer = QtCore.QTimer(self)
-            self.preview_timer.setInterval(330)
+            self.preview_timer.setInterval(100)
             self.preview_timer.timeout.connect(self._advance_preview)
 
             self._dataset_changed(self.current_dataset, auto_evaluate=False)
@@ -1543,13 +1679,36 @@ def create_dashboard_classes():
         def append_log(self, text):
             if not text:
                 return
+
             for line in str(text).splitlines():
                 if line.strip():
                     self.log_lines.append(line.rstrip())
+
+            self._schedule_log_flush()
+
+        def _schedule_log_flush(self):
+            now = time.time()
+
+            if now - getattr(self, '_last_log_flush_at', 0.0) >= 0.12:
+                self._flush_log_preview()
+                return
+
+            if not getattr(self, '_log_flush_pending', False):
+                self._log_flush_pending = True
+                QtCore.QTimer.singleShot(120, self._flush_log_preview)
+
+        def _flush_log_preview(self):
+            if not hasattr(self, 'log_preview'):
+                return
+
+            self._log_flush_pending = False
+            self._last_log_flush_at = time.time()
+
             self.log_preview.setPlainText('\n'.join(self.log_lines))
             cursor = self.log_preview.textCursor()
             cursor.movePosition(cursor.End)
             self.log_preview.setTextCursor(cursor)
+
 
         def _select_output_root(self):
             directory = QtWidgets.QFileDialog.getExistingDirectory(
@@ -1568,6 +1727,7 @@ def create_dashboard_classes():
             self.results_root = Path(directory)
             self.metrics_path = self.results_root / METRICS_FILENAME
             self._load_metrics()
+            QtCore.QTimer.singleShot(250, lambda: _style_mpl_toolbar_readable_buttons(self))
             self._populate_estimates(self.current_dataset)
             self.refresh_results()
 
@@ -1682,25 +1842,51 @@ def create_dashboard_classes():
                 return
             self._show_camera_frame(0)
 
-        def _show_camera_frame(self, index):
+        def _show_camera_frame(self, index, status_throttle=False):
             if index < 0 or index >= len(self.camera_frame_paths):
                 return
+
+            if index == self.camera_frame_index and status_throttle:
+                return
+
             self.camera_frame_index = index
             self.live_view.update_image_from_path(self.camera_frame_paths[index])
+
+            now = time.time()
+            should_update_status = (
+                not status_throttle
+                or now - getattr(self, '_last_preview_status_update', 0.0) >= 0.20
+                or index >= len(self.camera_frame_paths) - 1
+            )
+
+            if not should_update_status:
+                return
+
+            self._last_preview_status_update = now
+
             time_text = '-'
             if self.camera_frame_times:
                 first = self.camera_frame_times[0]
                 time_text = f'{self.camera_frame_times[index] - first:.3f} s'
+
             self._set_status_values(
                 frame=f'{index + 1} / {len(self.camera_frame_paths)}',
                 timestamp=time_text)
+
             if self.camera_frame_paths:
                 progress = int(100 * (index + 1) / len(self.camera_frame_paths))
                 self.progress_bar.setValue(max(0, min(100, progress)))
 
+
         def _update_camera_preview_for_timestamp(self, timestamp):
             if not self.camera_frame_times:
                 return
+
+            # While the preview timer is active, it owns camera playback.
+            # Timestamp-driven updates can jump around and create visible stutter.
+            if hasattr(self, 'preview_timer') and self.preview_timer.isActive():
+                return
+
             index = int(np.searchsorted(self.camera_frame_times, timestamp, side='left'))
             if index >= len(self.camera_frame_times):
                 index = len(self.camera_frame_times) - 1
@@ -1711,18 +1897,49 @@ def create_dashboard_classes():
                     index -= 1
             self._show_camera_frame(index)
 
+
         def _advance_preview(self):
             if not self.camera_frame_paths:
                 return
-            step = max(1, len(self.camera_frame_paths) // 1200)
+
+            now = time.time()
+            target_fps = max(1.0, float(getattr(self, 'preview_target_fps', 10.0)))
+
+            # Guard against accidental double ticks.
+            last_tick = getattr(self, '_last_preview_tick', 0.0)
+            if last_tick and now - last_tick < (0.50 / target_fps):
+                return
+            self._last_preview_tick = now
+
+            step = 1
+
+            if len(self.camera_frame_times) > 3:
+                try:
+                    sample = np.diff(np.asarray(self.camera_frame_times[:min(120, len(self.camera_frame_times))], dtype=float))
+                    sample = sample[np.isfinite(sample)]
+                    sample = sample[sample > 0]
+                    if len(sample):
+                        camera_dt = float(np.median(sample))
+                        step = max(1, int(round((1.0 / target_fps) / camera_dt)))
+                except Exception:
+                    step = 1
+            else:
+                step = max(1, len(self.camera_frame_paths) // 1200)
+
             next_index = self.camera_frame_index + step
             if next_index >= len(self.camera_frame_paths):
                 next_index = len(self.camera_frame_paths) - 1
-            self._show_camera_frame(next_index)
+
+            self._show_camera_frame(next_index, status_throttle=True)
             self.preview_frames_shown += 1
+
             if self.run_started_at is not None:
                 elapsed = max(1e-3, time.time() - self.run_started_at)
-                self._set_status_values(fps=f'{self.preview_frames_shown / elapsed:.1f}')
+                measured_fps = self.preview_frames_shown / elapsed
+
+                if now - getattr(self, '_last_preview_status_update', 0.0) >= 0.20:
+                    self._set_status_values(fps=f'{measured_fps:.1f}')
+
 
         def _populate_estimates(self, dataset_name):
             include_rejected = self.show_rejected_checkbox.isChecked()
@@ -1848,6 +2065,8 @@ def create_dashboard_classes():
             self.preview_frames_shown = 0
             self._last_stdout_timestamp = None
             self.live_view.reset_run()
+            self.preview_timer.setInterval(int(1000 / max(1.0, self.preview_target_fps)))
+            self.preview_timer.start()
             self._set_running_buttons(True)
             self.append_log('Running: ' + ' '.join(command))
 
@@ -1887,12 +2106,16 @@ def create_dashboard_classes():
         def _read_process_output(self):
             if self.process is None:
                 return
+
             text = bytes(self.process.readAllStandardOutput()).decode(errors='replace')
             if not text:
                 return
+
             lines = text.splitlines()
-            for line in lines[-40:]:
-                self.append_log(line)
+            recent_lines = lines[-40:]
+            self.append_log('\n'.join(recent_lines))
+
+            for line in recent_lines:
                 stripped = line.strip()
 
                 if stripped.startswith('timestamp:') or 'timestamp:' in stripped:
@@ -1900,6 +2123,7 @@ def create_dashboard_classes():
                         timestamp = float(stripped.split('timestamp:', 1)[1].strip().split()[0])
                     except (IndexError, ValueError):
                         continue
+
                     self._last_stdout_timestamp = timestamp
                     self._update_camera_preview_for_timestamp(timestamp)
                     continue
@@ -1908,13 +2132,21 @@ def create_dashboard_classes():
                     position = self._parse_stdout_vector(stripped)
                     if position is None:
                         continue
+
                     timestamp = self._last_stdout_timestamp
                     if timestamp is None:
                         timestamp = time.time()
+
                     self.live_view.append_pose(timestamp, position)
-                    self._set_status_values(
-                        fps=f'frames {self.live_view.frame_count} / poses {self.live_view.pose_count}')
+
+                    now = time.time()
+                    if now - getattr(self, '_last_pose_status_update', 0.0) >= 0.25:
+                        self._last_pose_status_update = now
+                        self._set_status_values(
+                            fps=f'cam {self.live_view.frame_count} / pose {self.live_view.pose_count}')
+
                     continue
+
 
         def _run_finished(self, dataset_name, expected_output, exit_code, exit_status):
             self.process = None
@@ -2170,7 +2402,7 @@ def create_dashboard_classes():
             groundtruth = result.groundtruth_interpolated
             ate_errors = result.error_norms
             if hasattr(self.live_view, 'set_final_trajectory'):
-                self.live_view.set_final_trajectory(estimate, groundtruth)
+                self.live_view.set_final_trajectory(estimate, groundtruth, times)
             else:
                 self.live_view.set_groundtruth_preview(groundtruth)
             self.live_view.set_evaluation_curves(
