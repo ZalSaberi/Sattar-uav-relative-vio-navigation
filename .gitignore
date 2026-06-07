@@ -20,6 +20,7 @@ output.mp4
 /results/ate_summary.py
 /results/rte_summary.pymachine_hall.zip
 results/
+results/dashboard_metrics_summary.json
 datasets/
 .venv/
 .venv-debug/

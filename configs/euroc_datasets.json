@@ -1,0 +1,69 @@
+{
+  "datasets": {
+    "MH_01_easy": {
+      "key": "MH_01_easy",
+      "display_name": "MH_01_easy",
+      "difficulty": "easy",
+      "relative_path": "MH_01_easy",
+      "default_offset": 10,
+      "cam0_data_csv": "mav0/cam0/data.csv",
+      "cam0_data_dir": "mav0/cam0/data",
+      "imu_csv": "mav0/imu0/data.csv",
+      "groundtruth_csv": "mav0/state_groundtruth_estimate0/data.csv",
+      "expected_output_pattern": "output_{dataset}_offset{offset}.txt",
+      "default_output_subdir_pattern": "dashboard_runs/{timestamp}_{dataset}_offset{offset}"
+    },
+    "MH_02_easy": {
+      "key": "MH_02_easy",
+      "display_name": "MH_02_easy",
+      "difficulty": "easy",
+      "relative_path": "MH_02_easy",
+      "default_offset": 10,
+      "cam0_data_csv": "mav0/cam0/data.csv",
+      "cam0_data_dir": "mav0/cam0/data",
+      "imu_csv": "mav0/imu0/data.csv",
+      "groundtruth_csv": "mav0/state_groundtruth_estimate0/data.csv",
+      "expected_output_pattern": "output_{dataset}_offset{offset}.txt",
+      "default_output_subdir_pattern": "dashboard_runs/{timestamp}_{dataset}_offset{offset}"
+    },
+    "MH_03_medium": {
+      "key": "MH_03_medium",
+      "display_name": "MH_03_medium",
+      "difficulty": "medium",
+      "relative_path": "MH_03_medium",
+      "default_offset": 10,
+      "cam0_data_csv": "mav0/cam0/data.csv",
+      "cam0_data_dir": "mav0/cam0/data",
+      "imu_csv": "mav0/imu0/data.csv",
+      "groundtruth_csv": "mav0/state_groundtruth_estimate0/data.csv",
+      "expected_output_pattern": "output_{dataset}_offset{offset}.txt",
+      "default_output_subdir_pattern": "dashboard_runs/{timestamp}_{dataset}_offset{offset}"
+    },
+    "MH_04_difficult": {
+      "key": "MH_04_difficult",
+      "display_name": "MH_04_difficult",
+      "difficulty": "difficult",
+      "relative_path": "MH_04_difficult",
+      "default_offset": 10,
+      "cam0_data_csv": "mav0/cam0/data.csv",
+      "cam0_data_dir": "mav0/cam0/data",
+      "imu_csv": "mav0/imu0/data.csv",
+      "groundtruth_csv": "mav0/state_groundtruth_estimate0/data.csv",
+      "expected_output_pattern": "output_{dataset}_offset{offset}.txt",
+      "default_output_subdir_pattern": "dashboard_runs/{timestamp}_{dataset}_offset{offset}"
+    },
+    "MH_05_difficult": {
+      "key": "MH_05_difficult",
+      "display_name": "MH_05_difficult",
+      "difficulty": "difficult",
+      "relative_path": "MH_05_difficult",
+      "default_offset": 10,
+      "cam0_data_csv": "mav0/cam0/data.csv",
+      "cam0_data_dir": "mav0/cam0/data",
+      "imu_csv": "mav0/imu0/data.csv",
+      "groundtruth_csv": "mav0/state_groundtruth_estimate0/data.csv",
+      "expected_output_pattern": "output_{dataset}_offset{offset}.txt",
+      "default_output_subdir_pattern": "dashboard_runs/{timestamp}_{dataset}_offset{offset}"
+    }
+  }
+}

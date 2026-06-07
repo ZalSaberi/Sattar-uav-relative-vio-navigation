@@ -26,6 +26,12 @@ Optional viewer mode:
 python -m pip install PyQt5 pyqtgraph
 ```
 
+Optional evaluation dashboard:
+
+```powershell
+python -m pip install PyQt5 pyqtgraph PyOpenGL matplotlib
+```
+
 ## Dataset Placement
 
 Place EuRoC sequences under `datasets` or another local directory that is not
@@ -58,6 +64,12 @@ Optional viewer dependency check:
 
 ```powershell
 python tools\smoke_check.py --check-viewer
+```
+
+EuRoC dataset registry check:
+
+```powershell
+python tools\dataset_registry.py --datasets-root .\datasets
 ```
 
 ## Run Commands
@@ -100,6 +112,18 @@ List available local results:
 python tools\list_available_results.py --datasets-root .\datasets --results-root .\results
 ```
 
+Launch the graphical evaluation dashboard:
+
+```powershell
+python tools\evaluation_dashboard.py --datasets-root .\datasets --results-root .\results
+```
+
+Validate dashboard data flow without launching the GUI:
+
+```powershell
+python tools\evaluation_dashboard.py --validate-data-flow --datasets-root .\datasets --results-root .\results
+```
+
 Optional batch summary CSV, only when explicitly needed:
 
 ```powershell
@@ -115,6 +139,8 @@ Do not commit:
 - EuRoC datasets under `datasets`;
 - generated trajectory text files under `results`;
 - generated aligned CSV files;
+- generated dashboard metrics summaries such as
+  `results\dashboard_metrics_summary.json`;
 - generated PNG plots;
 - generated videos;
 - logs;
