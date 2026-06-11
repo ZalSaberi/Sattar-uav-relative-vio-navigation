@@ -962,6 +962,59 @@ class MSCKF(object):
 
         return stats
 
+
+    def _passes_prune_geometry_gate(self, feature, cam_state_ids):
+        """
+        Reject only weak-geometry prune updates.
+
+        This gate is intentionally narrow:
+        - only active when MSCKF_PRUNE_GEOMETRY_GATE=1
+        - only used in prune_cam_state_buffer
+        - targets features with very low parallax and large depth when only a few
+          observations are being used in the prune update
+        """
+        if os.getenv("MSCKF_PRUNE_GEOMETRY_GATE", "0") != "1":
+            return True
+
+        stats = self._feature_geometry_stats(feature, cam_state_ids)
+
+        used_len = int(stats.get("used_len", 0))
+        depth = float(stats.get("depth0_median", float("nan")))
+        parallax = float(stats.get("used_parallax_deg", float("nan")))
+        baseline = float(stats.get("used_baseline", float("nan")))
+
+        try:
+            max_used_len = int(os.getenv("MSCKF_PRUNE_GATE_MAX_USED_LEN", "2"))
+        except ValueError:
+            max_used_len = 2
+
+        try:
+            min_parallax_deg = float(os.getenv("MSCKF_PRUNE_GATE_MIN_PARALLAX_DEG", "0.05"))
+        except ValueError:
+            min_parallax_deg = 0.05
+
+        try:
+            max_depth = float(os.getenv("MSCKF_PRUNE_GATE_MAX_DEPTH", "8.0"))
+        except ValueError:
+            max_depth = 8.0
+
+        try:
+            min_baseline = float(os.getenv("MSCKF_PRUNE_GATE_MIN_BASELINE", "0.0"))
+        except ValueError:
+            min_baseline = 0.0
+
+        if used_len <= max_used_len:
+            if np.isfinite(depth) and np.isfinite(parallax):
+                if depth > max_depth and parallax < min_parallax_deg:
+                    return False
+
+            if min_baseline > 0.0 and np.isfinite(depth) and np.isfinite(baseline):
+                if depth > max_depth and baseline < min_baseline:
+                    return False
+
+        return True
+
+
     def _log_feature_geometry(self, feature, cam_state_ids, H_xj, r_j, accepted, context):
         if os.getenv("VIO_DIAGNOSTICS") != "1":
             return
@@ -1150,13 +1203,17 @@ class MSCKF(object):
 
             H_xj, r_j = self.feature_jacobian(feature.id, involved_cam_state_ids)
 
-            accepted = self.gating_test(H_xj, r_j)
-            self._log_feature_geometry(feature, involved_cam_state_ids, H_xj, r_j, accepted,
-                                       "prune_cam_state_buffer")
-            if accepted:
-                H_x[stack_count:stack_count+H_xj.shape[0], :H_xj.shape[1]] = H_xj
-                r[stack_count:stack_count+len(r_j)] = r_j
-                stack_count += H_xj.shape[0]
+            if not self._passes_prune_geometry_gate(feature, involved_cam_state_ids):
+                self._log_feature_geometry(feature, involved_cam_state_ids, H_xj, r_j, False,
+                                           "prune_cam_state_buffer_geometry_reject")
+            else:
+                accepted = self.gating_test(H_xj, r_j)
+                self._log_feature_geometry(feature, involved_cam_state_ids, H_xj, r_j, accepted,
+                                           "prune_cam_state_buffer")
+                if accepted:
+                    H_x[stack_count:stack_count+H_xj.shape[0], :H_xj.shape[1]] = H_xj
+                    r[stack_count:stack_count+len(r_j)] = r_j
+                    stack_count += H_xj.shape[0]
 
             for cam_id in involved_cam_state_ids:
                 del feature.observations[cam_id]
