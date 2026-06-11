@@ -962,6 +962,75 @@ class MSCKF(object):
 
         return stats
 
+
+    def _prune_full_track_update_ids(self, feature, involved_cam_state_ids):
+        """
+        Promote weak prune updates to full-track feature updates.
+
+        Prune can use only two nearby observations with weak geometry, while the
+        complete feature track may have much stronger baseline/parallax. When
+        that happens, use the full track once and remove the feature afterward
+        to avoid double-counting.
+        """
+        if os.getenv("MSCKF_PRUNE_FULL_TRACK_UPDATE", "0") != "1":
+            return None
+
+        stats = self._feature_geometry_stats(feature, involved_cam_state_ids)
+
+        used_len = int(stats.get("used_len", 0))
+        track_len = int(stats.get("track_len", 0))
+        depth = float(stats.get("depth0_median", float("nan")))
+        used_baseline = float(stats.get("used_baseline", float("nan")))
+        all_baseline = float(stats.get("all_baseline", float("nan")))
+        used_parallax = float(stats.get("used_parallax_deg", float("nan")))
+        all_parallax = float(stats.get("all_parallax_deg", float("nan")))
+
+        max_used_len = int(os.getenv("MSCKF_PRUNE_FULL_MAX_USED_LEN", "2"))
+        min_track_len = int(os.getenv("MSCKF_PRUNE_FULL_MIN_TRACK_LEN", "5"))
+        min_depth = float(os.getenv("MSCKF_PRUNE_FULL_MIN_DEPTH", "8.0"))
+
+        weak_used_parallax = float(os.getenv("MSCKF_PRUNE_FULL_WEAK_USED_PARALLAX_DEG", "0.05"))
+        weak_used_baseline = float(os.getenv("MSCKF_PRUNE_FULL_WEAK_USED_BASELINE", "0.04"))
+
+        strong_all_parallax = float(os.getenv("MSCKF_PRUNE_FULL_MIN_ALL_PARALLAX_DEG", "0.5"))
+        strong_all_baseline = float(os.getenv("MSCKF_PRUNE_FULL_MIN_ALL_BASELINE", "0.2"))
+
+        if used_len > max_used_len:
+            return None
+
+        if track_len < min_track_len:
+            return None
+
+        if not (np.isfinite(depth) and depth > min_depth):
+            return None
+
+        weak_used_geometry = (
+            (np.isfinite(used_parallax) and used_parallax < weak_used_parallax) or
+            (np.isfinite(used_baseline) and used_baseline < weak_used_baseline)
+        )
+        if not weak_used_geometry:
+            return None
+
+        strong_full_track = (
+            np.isfinite(all_parallax) and
+            np.isfinite(all_baseline) and
+            all_parallax > strong_all_parallax and
+            all_baseline > strong_all_baseline
+        )
+        if not strong_full_track:
+            return None
+
+        all_ids = [
+            cam_id for cam_id in feature.observations.keys()
+            if cam_id in self.state_server.cam_states
+        ]
+
+        if len(all_ids) < 3:
+            return None
+
+        return all_ids
+
+
     def _log_feature_geometry(self, feature, cam_state_ids, H_xj, r_j, accepted, context):
         if os.getenv("VIO_DIAGNOSTICS") != "1":
             return
@@ -1117,6 +1186,7 @@ class MSCKF(object):
 
             if len(involved_cam_state_ids) == 0:
                 continue
+
             if len(involved_cam_state_ids) == 1:
                 del feature.observations[involved_cam_state_ids[0]]
                 continue
@@ -1133,13 +1203,21 @@ class MSCKF(object):
                         del feature.observations[cam_id]
                     continue
 
-            jacobian_row_size += 4*len(involved_cam_state_ids) - 3
+            full_track_ids = self._prune_full_track_update_ids(
+                feature, involved_cam_state_ids)
+
+            if full_track_ids is not None:
+                jacobian_row_size += 4*len(full_track_ids) - 3
+            else:
+                jacobian_row_size += 4*len(involved_cam_state_ids) - 3
 
         H_x = np.zeros((jacobian_row_size, 21+6*len(self.state_server.cam_states)))
         r = np.zeros(jacobian_row_size)
 
         stack_count = 0
-        for feature in self.map_server.values():
+        full_track_feature_ids = set()
+
+        for feature in list(self.map_server.values()):
             involved_cam_state_ids = []
             for cam_id in rm_cam_state_ids:
                 if cam_id in feature.observations:
@@ -1148,18 +1226,44 @@ class MSCKF(object):
             if len(involved_cam_state_ids) == 0:
                 continue
 
-            H_xj, r_j = self.feature_jacobian(feature.id, involved_cam_state_ids)
+            if len(involved_cam_state_ids) == 1:
+                del feature.observations[involved_cam_state_ids[0]]
+                continue
+
+            full_track_ids = self._prune_full_track_update_ids(
+                feature, involved_cam_state_ids)
+
+            if full_track_ids is not None:
+                cam_state_ids_for_update = full_track_ids
+                geometry_context = "prune_cam_state_buffer_full_track"
+            else:
+                cam_state_ids_for_update = involved_cam_state_ids
+                geometry_context = "prune_cam_state_buffer"
+
+            H_xj, r_j = self.feature_jacobian(
+                feature.id, cam_state_ids_for_update)
 
             accepted = self.gating_test(H_xj, r_j)
-            self._log_feature_geometry(feature, involved_cam_state_ids, H_xj, r_j, accepted,
-                                       "prune_cam_state_buffer")
+            self._log_feature_geometry(
+                feature, cam_state_ids_for_update, H_xj, r_j, accepted,
+                geometry_context)
+
             if accepted:
                 H_x[stack_count:stack_count+H_xj.shape[0], :H_xj.shape[1]] = H_xj
                 r[stack_count:stack_count+len(r_j)] = r_j
                 stack_count += H_xj.shape[0]
 
-            for cam_id in involved_cam_state_ids:
-                del feature.observations[cam_id]
+                if full_track_ids is not None:
+                    full_track_feature_ids.add(feature.id)
+
+            if full_track_ids is None or not accepted:
+                for cam_id in involved_cam_state_ids:
+                    if cam_id in feature.observations:
+                        del feature.observations[cam_id]
+
+        for feature_id in full_track_feature_ids:
+            if feature_id in self.map_server:
+                del self.map_server[feature_id]
 
         H_x = H_x[:stack_count]
         r = r[:stack_count]
@@ -1179,6 +1283,7 @@ class MSCKF(object):
             self.state_server.state_cov = state_cov[:-6, :-6]
 
             del self.state_server.cam_states[cam_id]
+
 
     def reset_state_cov(self):
         """
