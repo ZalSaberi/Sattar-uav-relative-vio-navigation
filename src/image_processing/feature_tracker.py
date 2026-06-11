@@ -139,8 +139,66 @@ class FeatureTracker:
         cm_cam1  = select(curr_cam1_pts,  match_mask)
         self.num_features['after_matching'] = len(cm_cam0)
 
-        cam0_inls = [1] * len(pm_cam0)
-        cam1_inls = [1] * len(pm_cam1)
+        # 9) Temporal geometric outlier rejection.
+        #
+        # The previous implementation effectively accepted every matched feature:
+        #     cam0_inls = [1] * len(pm_cam0)
+        #     cam1_inls = [1] * len(pm_cam1)
+        #
+        # Here we use a Fundamental Matrix RANSAC between previous cam0 points
+        # and current cam0 points. This does not change LK/stereo matching itself;
+        # it only rejects temporally inconsistent tracks before publishing them
+        # to the MSCKF update pipeline.
+        ransac_mask = np.ones(len(cm_cam0), dtype=bool)
+        self.num_features['ransac_candidates'] = int(len(cm_cam0))
+        self.num_features['ransac_used'] = 0
+        self.num_features['ransac_failed'] = 0
+
+        if len(cm_cam0) >= 8:
+            pts_prev = np.asarray(pm_cam0, dtype=np.float32).reshape(-1, 2)
+            pts_curr = np.asarray(cm_cam0, dtype=np.float32).reshape(-1, 2)
+
+            finite = (
+                np.isfinite(pts_prev).all(axis=1) &
+                np.isfinite(pts_curr).all(axis=1)
+            )
+            ransac_mask &= finite
+
+            if int(np.sum(finite)) >= 8:
+                try:
+                    F, mask = cv2.findFundamentalMat(
+                        pts_prev[finite],
+                        pts_curr[finite],
+                        cv2.FM_RANSAC,
+                        float(self.ransac_threshold),
+                        0.99
+                    )
+                except cv2.error:
+                    F, mask = None, None
+
+                if F is not None and mask is not None:
+                    local_mask = mask.reshape(-1).astype(bool)
+                    tmp_mask = np.zeros(len(cm_cam0), dtype=bool)
+                    finite_indices = np.flatnonzero(finite)
+                    tmp_mask[finite_indices] = local_mask
+
+                    # Guard against degenerate cases: if RANSAC returns too few
+                    # inliers, do not destroy the frame. Keep finite matches and
+                    # mark this frame as RANSAC-failed for diagnostics.
+                    min_inliers = max(8, int(0.25 * len(cm_cam0)))
+                    if int(np.sum(tmp_mask)) >= min_inliers:
+                        ransac_mask = tmp_mask
+                        self.num_features['ransac_used'] = 1
+                    else:
+                        self.num_features['ransac_failed'] = 1
+                else:
+                    self.num_features['ransac_failed'] = 1
+
+        self.num_features['ransac_inliers'] = int(np.sum(ransac_mask))
+        self.num_features['ransac_rejected'] = int(len(cm_cam0) - np.sum(ransac_mask))
+
+        cam0_inls = ransac_mask
+        cam1_inls = ransac_mask
 
         # 10) Обновляем curr_features
         cnt = 0

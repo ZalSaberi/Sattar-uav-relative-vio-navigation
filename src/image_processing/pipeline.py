@@ -56,6 +56,8 @@ class ImageProcessingPipeline:
         Возвращает сообщение FeatureMeasurement.
         """
 
+        self.num_features.clear()
+
         self.imu_processor.cam0_prev_img_msg = self.prev_cam0_msg
         self.imu_processor.cam0_curr_img_msg = stereo_msg.cam0_msg
 
@@ -162,6 +164,11 @@ class ImageProcessingPipeline:
                 "after_tracking": int(self.num_features.get("after_tracking", 0)),
                 "after_matching": int(self.num_features.get("after_matching", 0)),
                 "after_ransac": int(self.num_features.get("after_ransac", 0)),
+                "ransac_candidates": int(self.num_features.get("ransac_candidates", 0)),
+                "ransac_inliers": int(self.num_features.get("ransac_inliers", 0)),
+                "ransac_rejected": int(self.num_features.get("ransac_rejected", 0)),
+                "ransac_used": int(self.num_features.get("ransac_used", 0)),
+                "ransac_failed": int(self.num_features.get("ransac_failed", 0)),
                 "published_features": int(len(feature_msg.features)),
                 "next_feature_id": int(self.next_feature_id),
                 "curr_grid_nonempty": int(sum(1 for cell in self.curr_features if len(cell) > 0)),
