@@ -861,6 +861,145 @@ class MSCKF(object):
         else:
             return False
 
+
+    def _feature_geometry_stats(self, feature, cam_state_ids):
+        stats = {
+            "feature_id": int(feature.id),
+            "track_len": int(len(feature.observations)),
+            "used_len": int(len(cam_state_ids)),
+            "is_initialized": int(bool(feature.is_initialized)),
+            "position_norm": float("nan"),
+            "depth0_min": float("nan"),
+            "depth0_median": float("nan"),
+            "depth0_max": float("nan"),
+            "all_baseline": float("nan"),
+            "used_baseline": float("nan"),
+            "all_parallax_deg": float("nan"),
+            "used_parallax_deg": float("nan"),
+            "stereo_disparity_min": float("nan"),
+            "stereo_disparity_median": float("nan"),
+            "stereo_disparity_max": float("nan"),
+        }
+
+        if np.all(np.isfinite(feature.position)):
+            stats["position_norm"] = float(np.linalg.norm(feature.position))
+
+        all_ids = [cid for cid in feature.observations.keys()
+                   if cid in self.state_server.cam_states]
+        used_ids = [cid for cid in cam_state_ids
+                    if cid in feature.observations and cid in self.state_server.cam_states]
+        stats["used_len"] = int(len(used_ids))
+
+        depths = []
+        for cid in all_ids:
+            cam_state = self.state_server.cam_states[cid]
+            R_w_c0 = to_rotation(cam_state.orientation)
+            p_c0 = R_w_c0 @ (feature.position - cam_state.position)
+            if np.all(np.isfinite(p_c0)):
+                depths.append(float(p_c0[2]))
+
+        if len(depths) > 0:
+            arr = np.asarray(depths, dtype=float)
+            arr = arr[np.isfinite(arr)]
+            if len(arr) > 0:
+                stats["depth0_min"] = float(np.min(arr))
+                stats["depth0_median"] = float(np.median(arr))
+                stats["depth0_max"] = float(np.max(arr))
+
+        disparities = []
+        for cid in all_ids:
+            m = np.asarray(feature.observations[cid], dtype=float)
+            if len(m) >= 4 and np.all(np.isfinite(m[:4])):
+                disparities.append(abs(float(m[0] - m[2])))
+
+        if len(disparities) > 0:
+            arr = np.asarray(disparities, dtype=float)
+            arr = arr[np.isfinite(arr)]
+            if len(arr) > 0:
+                stats["stereo_disparity_min"] = float(np.min(arr))
+                stats["stereo_disparity_median"] = float(np.median(arr))
+                stats["stereo_disparity_max"] = float(np.max(arr))
+
+        def bearing_world(cid):
+            cam_state = self.state_server.cam_states[cid]
+            m = np.asarray(feature.observations[cid], dtype=float)
+            if len(m) < 2 or not np.all(np.isfinite(m[:2])):
+                return None
+            b_cam = np.array([m[0], m[1], 1.0], dtype=float)
+            n = np.linalg.norm(b_cam)
+            if not np.isfinite(n) or n <= 0.0:
+                return None
+            b_cam /= n
+            R_w_c0 = to_rotation(cam_state.orientation)
+            b_world = R_w_c0.T @ b_cam
+            n = np.linalg.norm(b_world)
+            if not np.isfinite(n) or n <= 0.0:
+                return None
+            return b_world / n
+
+        def motion_stats(ids, prefix):
+            if len(ids) < 2:
+                return
+            first_id = ids[0]
+            last_id = ids[-1]
+
+            first_state = self.state_server.cam_states[first_id]
+            last_state = self.state_server.cam_states[last_id]
+
+            baseline = np.linalg.norm(last_state.position - first_state.position)
+            stats[f"{prefix}_baseline"] = float(baseline)
+
+            b0 = bearing_world(first_id)
+            b1 = bearing_world(last_id)
+            if b0 is None or b1 is None:
+                return
+
+            dot = float(np.clip(b0 @ b1, -1.0, 1.0))
+            stats[f"{prefix}_parallax_deg"] = float(np.degrees(np.arccos(dot)))
+
+        motion_stats(all_ids, "all")
+        motion_stats(used_ids, "used")
+
+        return stats
+
+    def _log_feature_geometry(self, feature, cam_state_ids, H_xj, r_j, accepted, context):
+        if os.getenv("VIO_DIAGNOSTICS") != "1":
+            return
+
+        diag_dir = os.getenv("VIO_DIAGNOSTICS_DIR")
+        if not diag_dir:
+            return
+
+        try:
+            import csv
+            from pathlib import Path
+
+            row = {
+                "timestamp": self._diag_timestamp,
+                "context": context,
+                "gate_accepted": int(bool(accepted)),
+                "H_rows": int(H_xj.shape[0]) if hasattr(H_xj, "shape") else 0,
+                "H_cols": int(H_xj.shape[1]) if hasattr(H_xj, "shape") and len(H_xj.shape) > 1 else 0,
+                "r_len": int(len(r_j)) if hasattr(r_j, "__len__") else 0,
+                "r_norm": float(np.linalg.norm(r_j)) if hasattr(r_j, "__len__") and len(r_j) > 0 and np.all(np.isfinite(r_j)) else 0.0,
+            }
+            row.update(self._feature_geometry_stats(feature, cam_state_ids))
+
+            path = Path(diag_dir) / "feature_geometry.csv"
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+            fields = list(row.keys())
+            write_header = not path.exists()
+            with path.open("a", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fields)
+                if write_header:
+                    writer.writeheader()
+                writer.writerow(row)
+
+        except Exception as exc:
+            print(f"[diagnostics] failed to write feature_geometry.csv: {exc}")
+
+
     def remove_lost_features(self):
         # Удаляет признаки, потерявшие трекинг.
         # Определяет размер итоговой матрицы якобиана и вектора невязок.
@@ -909,7 +1048,10 @@ class MSCKF(object):
 
             H_xj, r_j = self.feature_jacobian(feature.id, cam_state_ids)
 
-            if self.gating_test(H_xj, r_j):
+            accepted = self.gating_test(H_xj, r_j)
+            self._log_feature_geometry(feature, cam_state_ids, H_xj, r_j, accepted,
+                                       "remove_lost_features")
+            if accepted:
                 H_x[stack_count:stack_count+H_xj.shape[0], :H_xj.shape[1]] = H_xj
                 r[stack_count:stack_count+len(r_j)] = r_j
                 stack_count += H_xj.shape[0]
@@ -1008,7 +1150,10 @@ class MSCKF(object):
 
             H_xj, r_j = self.feature_jacobian(feature.id, involved_cam_state_ids)
 
-            if self.gating_test(H_xj, r_j):
+            accepted = self.gating_test(H_xj, r_j)
+            self._log_feature_geometry(feature, involved_cam_state_ids, H_xj, r_j, accepted,
+                                       "prune_cam_state_buffer")
+            if accepted:
                 H_x[stack_count:stack_count+H_xj.shape[0], :H_xj.shape[1]] = H_xj
                 r[stack_count:stack_count+len(r_j)] = r_j
                 stack_count += H_xj.shape[0]
