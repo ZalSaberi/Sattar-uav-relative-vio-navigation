@@ -647,6 +647,53 @@ class MSCKF(object):
             H_thin = H   # shape (M, N)
             r_thin = r   # shape (M)
 
+        # Rank-revealing row-space compression for MSCKF measurement updates.
+        #
+        # QR reduces row count, but it can leave numerically dependent
+        # measurement directions. We remove weak singular directions before
+        # building S and K, so small residuals cannot create large corrections
+        # through an ill-conditioned H_thin.
+        if os.getenv("MSCKF_ROWSPACE_SVD", "1") == "1":
+            try:
+                U_h, s_h, _ = np.linalg.svd(H_thin, full_matrices=False)
+
+                if len(s_h) > 0:
+                    tol_factor = float(os.getenv("MSCKF_ROWSPACE_SVD_TOL", "1e-9"))
+                    tol = tol_factor * float(s_h[0])
+                    keep = s_h > tol
+                    kept_rank = int(np.sum(keep))
+
+                    min_rank = int(os.getenv("MSCKF_ROWSPACE_MIN_RANK", "4"))
+
+                    if kept_rank < min_rank:
+                        if self.diagnostic_logger is not None:
+                            self.diagnostic_logger.log_msckf_update({
+                                "timestamp": self._diag_timestamp,
+                                "context": self._diag_context,
+                                "status": "rowspace_rank_reject",
+                                "H_rows": int(H.shape[0]),
+                                "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
+                                "r_len": int(len(r)),
+                                "r_norm": float(np.linalg.norm(r)),
+                                "delta_norm": 0.0,
+                                "delta_orientation_norm": 0.0,
+                                "delta_velocity_norm": 0.0,
+                                "delta_position_norm": 0.0,
+                                "delta_gyro_bias_norm": 0.0,
+                                "delta_acc_bias_norm": 0.0,
+                                "num_cam_states": int(len(self.state_server.cam_states)),
+                                "map_features": int(len(self.map_server)),
+                            })
+                        return
+
+                    if kept_rank < H_thin.shape[0]:
+                        U_keep = U_h[:, keep]
+                        H_thin = U_keep.T @ H_thin
+                        r_thin = U_keep.T @ r_thin
+
+            except Exception as exc:
+                print(f"[Warning] Row-space SVD conditioning failed: {exc}")
+
         P = self.state_server.state_cov
         S = H_thin @ P @ H_thin.T + (self.config.observation_noise * 
             np.identity(len(H_thin)))
