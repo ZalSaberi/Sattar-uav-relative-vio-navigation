@@ -742,9 +742,17 @@ class MSCKF(object):
             cam_state.position += delta_x_cam[3:]
 
         I_KH = np.identity(len(K)) - K @ H_thin
-        # state_cov = I_KH @ self.state_server.state_cov @ I_KH.T + (
-        #     K @ K.T * self.config.observation_noise)
-        state_cov = I_KH @ self.state_server.state_cov   # ?
+
+        # Joseph-form covariance update:
+        # P_new = (I-KH) P (I-KH)^T + K R K^T
+        #
+        # The previous implementation used only I_KH @ P and then symmetrized it.
+        # That can make the filter numerically inconsistent and overly confident.
+        R_obs = self.config.observation_noise * np.identity(H_thin.shape[0])
+        state_cov = (
+            I_KH @ self.state_server.state_cov @ I_KH.T +
+            K @ R_obs @ K.T
+        )
 
         self.state_server.state_cov = (state_cov + state_cov.T) / 2.
 
