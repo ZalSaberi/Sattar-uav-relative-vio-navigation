@@ -36,6 +36,9 @@ def parse_args():
         '--max-samples', type=int, default=None,
         help='Optional cap on aligned samples after timestamp filtering.')
     parser.add_argument(
+        '--skip-estimate-seconds', type=float, default=0.0,
+        help='Ignore this many seconds from the beginning of the estimate before alignment/metrics. Default: 0.0.')
+    parser.add_argument(
         '--csv',
         help='Optional output CSV for aligned samples and per-sample error.')
     parser.add_argument(
@@ -268,6 +271,27 @@ def maybe_limit_samples(times, estimate, groundtruth, max_samples):
     return times[indices], estimate[indices], groundtruth[indices]
 
 
+def apply_estimate_warmup_skip(times, positions, quaternions, skip_seconds):
+    skip_seconds = float(skip_seconds or 0.0)
+    if skip_seconds < 0.0:
+        raise EvaluationError('--skip-estimate-seconds must be non-negative')
+    if skip_seconds <= 0.0:
+        return times, positions, quaternions
+
+    if len(times) < 2:
+        raise EvaluationError('Estimate needs at least two samples before warm-up skip')
+
+    threshold = float(times[0]) + skip_seconds
+    keep = times >= threshold
+    kept = int(np.sum(keep))
+
+    if kept < 3:
+        raise EvaluationError(
+            f'Warm-up skip removed too many estimate samples: kept {kept}, need at least 3')
+
+    return times[keep], positions[keep], quaternions[keep]
+
+
 def write_aligned_csv(path, times, estimate_aligned, groundtruth, error_norms):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -337,6 +361,11 @@ def print_summary(result):
           f'groundtruth={result["groundtruth_start"]:.6f}..{result["groundtruth_end"]:.6f}')
     print('               '
           f'aligned={result["aligned_start"]:.6f}..{result["aligned_end"]:.6f}')
+    if float(result.get('skip_estimate_seconds', 0.0)) > 0.0:
+        print(
+            '  warm-up skip: '
+            f'{result["skip_estimate_seconds"]:.3f}s '
+            f'({result.get("estimate_raw_samples", result["estimate_samples"])} raw estimate samples)')
     print('  transform estimate->groundtruth:')
     print(f'    scale: {result["scale"]:.9f}')
     translation = result['translation']
@@ -363,10 +392,13 @@ def print_summary(result):
 
 
 def evaluate_files(estimate_path, groundtruth_path, align='se3', max_samples=None,
-                   rpe_delta_seconds=1.0):
+                   rpe_delta_seconds=1.0, skip_estimate_seconds=0.0):
     estimate_path = require_file(estimate_path, 'Estimate')
     groundtruth_path = require_file(groundtruth_path, 'Ground truth')
-    estimate_t, estimate_p, _ = read_estimate(estimate_path)
+    estimate_t, estimate_p, estimate_q = read_estimate(estimate_path)
+    raw_estimate_samples = len(estimate_t)
+    estimate_t, estimate_p, estimate_q = apply_estimate_warmup_skip(
+        estimate_t, estimate_p, estimate_q, skip_estimate_seconds)
     gt_t, gt_p, _ = read_groundtruth(groundtruth_path)
     valid, aligned_t, aligned_gt = interpolate_groundtruth(gt_t, gt_p, estimate_t)
     aligned_estimate = estimate_p[valid]
@@ -388,6 +420,8 @@ def evaluate_files(estimate_path, groundtruth_path, align='se3', max_samples=Non
         'groundtruth_path': str(groundtruth_path),
         'alignment': align,
         'estimate_samples': len(estimate_t),
+        'estimate_raw_samples': int(raw_estimate_samples),
+        'skip_estimate_seconds': float(skip_estimate_seconds or 0.0),
         'groundtruth_samples': len(gt_t),
         'aligned_samples': len(aligned_t),
         'estimate_start': float(estimate_t[0]),
@@ -415,7 +449,7 @@ def evaluate(args):
 
     result = evaluate_files(
         estimate_path, groundtruth_path, args.align, args.max_samples,
-        rpe_delta_seconds)
+        rpe_delta_seconds, skip_estimate_seconds=args.skip_estimate_seconds)
 
     print_summary(result)
 

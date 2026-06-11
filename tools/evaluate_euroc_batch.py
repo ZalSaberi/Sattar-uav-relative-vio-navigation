@@ -47,6 +47,9 @@ def parse_args():
         '--max-samples', type=int, default=None,
         help='Optional cap on aligned samples after timestamp filtering.')
     parser.add_argument(
+        '--skip-estimate-seconds', type=float, default=0.0,
+        help='Ignore this many seconds from the beginning of each estimate before alignment/metrics. Default: 0.0.')
+    parser.add_argument(
         '--rpe-delta-seconds', type=float, default=1.0,
         help='Compute translation RPE over this time delta in seconds. Default: 1.0.')
     parser.add_argument(
@@ -125,6 +128,7 @@ def evaluate_batch(args):
                     align=args.align,
                     max_samples=args.max_samples,
                     rpe_delta_seconds=rpe_delta_seconds,
+                    skip_estimate_seconds=args.skip_estimate_seconds,
                 )
             except EvaluationError as exc:
                 warnings.append(f'{dataset_name}: {estimate_path}: {exc}')
@@ -210,6 +214,7 @@ def write_summary_csv(path, results):
             'ate_median_m',
             'ate_max_m',
             'rpe_delta_seconds',
+            'skip_estimate_seconds',
             'rpe_pairs',
             'rpe_rmse_m',
         ])
@@ -226,6 +231,7 @@ def write_summary_csv(path, results):
                 f'{ate["median_m"]:.9f}',
                 f'{ate["max_m"]:.9f}',
                 '' if rpe is None else f'{rpe["delta_seconds"]:.9f}',
+                f'{result.get("skip_estimate_seconds", 0.0):.9f}',
                 '' if rpe is None else rpe['pairs'],
                 '' if rpe is None or rpe['metrics'] is None else f'{rpe["metrics"]["rmse_m"]:.9f}',
             ])
