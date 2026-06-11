@@ -637,15 +637,47 @@ class MSCKF(object):
                 })
             return
 
-        # Декомпозирует итоговую матрицу якобиана для снижения вычислительной сложности
+        # Compress the stacked measurement into its numerical row space.
+        #
+        # QR thinning keeps many near-dependent rows when H is ill-conditioned.
+        # SVD row-space compression keeps only independent directions and removes
+        # numerically null constraints before computing S and K.
+        try:
+            U_h, s_h, Vt_h = np.linalg.svd(H, full_matrices=False)
+        except np.linalg.LinAlgError:
+            if self.diagnostic_logger is not None:
+                self.diagnostic_logger.log_msckf_update({
+                    "timestamp": self._diag_timestamp,
+                    "context": self._diag_context,
+                    "status": "svd_failed_H",
+                    "H_rows": int(H.shape[0]),
+                    "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
+                    "r_len": int(len(r)),
+                    "r_norm": float(np.linalg.norm(r)),
+                    "delta_norm": 0.0,
+                    "delta_orientation_norm": 0.0,
+                    "delta_velocity_norm": 0.0,
+                    "delta_position_norm": 0.0,
+                    "delta_gyro_bias_norm": 0.0,
+                    "delta_acc_bias_norm": 0.0,
+                    "num_cam_states": int(len(self.state_server.cam_states)),
+                    "map_features": int(len(self.map_server)),
+                })
+            return
 
-        if H.shape[0] > H.shape[1]:
-            Q, R = np.linalg.qr(H, mode='reduced')  # if M > N, return (M, N), (N, N)
-            H_thin = R         # shape (N, N)
-            r_thin = Q.T @ r   # shape (N,)
-        else:
-            H_thin = H   # shape (M, N)
-            r_thin = r   # shape (M)
+        if len(s_h) == 0 or not np.all(np.isfinite(s_h)) or s_h[0] <= 0.0:
+            return
+
+        tol_scale = float(os.getenv("MSCKF_ROWSPACE_SVD_TOL_SCALE", "1.0"))
+        tol = tol_scale * np.finfo(float).eps * max(H.shape) * s_h[0]
+        rank_h = int(np.sum(s_h > tol))
+
+        if rank_h <= 0:
+            return
+
+        U_r = U_h[:, :rank_h]
+        H_thin = np.diag(s_h[:rank_h]) @ Vt_h[:rank_h, :]
+        r_thin = U_r.T @ r
 
         P = self.state_server.state_cov
         S = H_thin @ P @ H_thin.T + (self.config.observation_noise * 
