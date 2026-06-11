@@ -35,7 +35,16 @@ METRICS_FILENAME = 'dashboard_metrics_summary.json'
 MAX_PLOT_POINTS = 2400
 MAX_LOG_LINES = 120
 TASKBAR_SAFE_MARGIN = 8
-REJECTED_PATH_MARKERS = ('phase3c', 'raw_jacobian')
+REJECTED_PATH_MARKERS = (
+    'phase3c',
+    'raw_jacobian',
+
+    # Generated analysis artifacts, not raw VIO outputs.
+    # These files may already have warm-up cropping applied, so evaluating them
+    # with another warm-up skip can remove all samples.
+    'warmup_sensitivity_existing_outputs',
+    'cropped_estimates',
+)
 MIN_ACCEPTED_ALIGNED_SAMPLES = 100
 MIN_ACCEPTED_OVERLAP_SECONDS = 1.0
 MAX_ACCEPTED_ATE_RMSE = 10.0
@@ -78,6 +87,9 @@ def parse_args(argv=None):
     parser.add_argument(
         '--default-offset', type=int, default=10,
         help='Default run offset shown in the dashboard. Default: 10.')
+    parser.add_argument(
+        '--warmup-skip-seconds', type=float, default=0.0,
+        help='Default evaluation warm-up skip in seconds. This affects metrics only, not VIO processing. Default: 0.0.')
     parser.add_argument(
         '--validate-data-flow',
         action='store_true',
@@ -133,7 +145,12 @@ def estimate_pattern(dataset_name):
 
 def is_rejected_estimate_path(path):
     text = str(path).lower()
-    return any(marker in text for marker in REJECTED_PATH_MARKERS)
+    name = Path(path).name.lower()
+    if any(marker in text for marker in REJECTED_PATH_MARKERS):
+        return True
+    if re.search(r'_skip\\d+(?:\\.\\d+)?s(?:_|\\.)', name):
+        return True
+    return False
 
 
 def find_estimates(results_root, dataset_name, include_rejected=True):
@@ -218,6 +235,7 @@ def empty_row(dataset_name, status='missing', color=None):
         'groundtruth_path': '',
         'computed_at': '-',
         'alignment_mode': 'se3',
+        'skip_estimate_seconds': 0.0,
         'data_source_status': 'Missing',
         'accepted': False,
         'acceptance_reason': status,
@@ -273,6 +291,7 @@ def serialize_result(dataset_name, estimate_path, groundtruth_path, results_root
         'groundtruth_path': str(groundtruth_path),
         'computed_at': computed_at,
         'alignment_mode': result['alignment'],
+        'skip_estimate_seconds': float(result.get('skip_estimate_seconds', 0.0)),
         'data_source_status': data_source_status,
         'accepted': accepted,
         'acceptance_reason': reason,
@@ -288,13 +307,16 @@ def serialize_result(dataset_name, estimate_path, groundtruth_path, results_root
     }
 
 
-def evaluate_estimate(dataset_name, estimate_path, datasets_root, results_root):
+def evaluate_estimate(dataset_name, estimate_path, datasets_root, results_root,
+                      skip_estimate_seconds=0.0):
     estimate_path = Path(estimate_path)
     resolved = DATASET_REGISTRY.resolve(dataset_name, datasets_root)
     gt_path = resolved.groundtruth_path
     if not gt_path.exists():
         raise EvaluationError(f'Ground truth missing: {gt_path}')
-    result = evaluate_files(estimate_path, gt_path, align='se3', rpe_delta_seconds=1.0)
+    result = evaluate_files(
+        estimate_path, gt_path, align='se3', rpe_delta_seconds=1.0,
+        skip_estimate_seconds=skip_estimate_seconds)
     row = serialize_result(dataset_name, estimate_path, gt_path, results_root, result)
     metrics = {
         'ATE RMSE': row['ate_rmse_m'],
@@ -303,6 +325,7 @@ def evaluate_estimate(dataset_name, estimate_path, datasets_root, results_root):
         'ATE max': row['ate_max_m'],
         'RPE 1s RMSE': row['rpe_1s_rmse_m'],
         'aligned samples': row['aligned_samples'],
+        'warm-up skip': row.get('skip_estimate_seconds', 0.0),
         'overlap duration': row['overlap_duration_s'],
     }
     rpe = result.get('rpe')
@@ -366,6 +389,7 @@ def compare_metric_rows(recomputed, cached, tolerance=1e-6):
     for key in (
         'ate_rmse_m', 'ate_mean_m', 'ate_median_m', 'ate_max_m',
         'rpe_1s_rmse_m', 'aligned_samples', 'overlap_duration_s',
+        'skip_estimate_seconds',
     ):
         expected = recomputed.get(key)
         actual = cached.get(key)
@@ -415,8 +439,20 @@ def validate_data_flow(args):
         fallback_row = None
         fallback_model = None
         for estimate_path in estimates:
-            row, model = evaluate_estimate(
-                resolved.key, estimate_path, args.datasets_root, args.results_root)
+            try:
+                row, model = evaluate_estimate(
+                    resolved.key, estimate_path, args.datasets_root, args.results_root,
+                    skip_estimate_seconds=args.warmup_skip_seconds)
+            except Exception as exc:
+                print(f'  skipped:      {estimate_path}')
+                print(f'  skip reason:  {exc}')
+                if fallback_row is None:
+                    fallback_row = empty_row(resolved.key, 'failed', COLORS['red'])
+                    fallback_row['estimate'] = str(estimate_path)
+                    fallback_row['estimate_relpath'] = relative_path(estimate_path, args.results_root)
+                    fallback_model = None
+                continue
+
             if row.get('accepted'):
                 selected_row = row
                 selected_model = model
@@ -559,19 +595,22 @@ def create_dashboard_classes():
         finished = QtCore.pyqtSignal(str, str, object, object)
         failed = QtCore.pyqtSignal(str, str, str)
 
-        def __init__(self, dataset_name, estimate_path, datasets_root, results_root):
+        def __init__(self, dataset_name, estimate_path, datasets_root, results_root,
+                     skip_estimate_seconds=0.0):
             super().__init__()
             self.dataset_name = dataset_name
             self.estimate_path = str(estimate_path)
             self.datasets_root = str(datasets_root)
             self.results_root = str(results_root)
+            self.skip_estimate_seconds = float(skip_estimate_seconds or 0.0)
 
         @QtCore.pyqtSlot()
         def run(self):
             try:
                 row, result = evaluate_estimate(
                     self.dataset_name, self.estimate_path,
-                    self.datasets_root, self.results_root)
+                    self.datasets_root, self.results_root,
+                    skip_estimate_seconds=self.skip_estimate_seconds)
             except Exception as exc:  # Keep the GUI boundary explicit.
                 self.failed.emit(self.dataset_name, self.estimate_path, str(exc))
                 return
@@ -581,11 +620,13 @@ def create_dashboard_classes():
         finished = QtCore.pyqtSignal(object)
         message = QtCore.pyqtSignal(str)
 
-        def __init__(self, datasets_root, results_root, include_rejected=False):
+        def __init__(self, datasets_root, results_root, include_rejected=False,
+                     skip_estimate_seconds=0.0):
             super().__init__()
             self.datasets_root = Path(datasets_root)
             self.results_root = Path(results_root)
             self.include_rejected = include_rejected
+            self.skip_estimate_seconds = float(skip_estimate_seconds or 0.0)
 
         @QtCore.pyqtSlot()
         def run(self):
@@ -603,7 +644,8 @@ def create_dashboard_classes():
                     self.message.emit(f'Evaluating latest result for {dataset_name}: {estimate_path.name}')
                     try:
                         row, _ = evaluate_estimate(
-                            dataset_name, estimate_path, self.datasets_root, self.results_root)
+                            dataset_name, estimate_path, self.datasets_root, self.results_root,
+                            skip_estimate_seconds=self.skip_estimate_seconds)
                     except Exception as exc:
                         fallback_row = empty_row(dataset_name, 'failed', COLORS['red'])
                         fallback_row['estimate'] = str(estimate_path)
@@ -996,6 +1038,7 @@ def create_dashboard_classes():
 
     class DashboardWindow(QtWidgets.QMainWindow):
         def __init__(self, datasets_root, results_root, default_offset,
+                     warmup_skip_seconds=0.0,
                      auto_refresh=True, auto_evaluate=True):
             super().__init__()
             self.datasets_root = Path(datasets_root)
@@ -1003,6 +1046,7 @@ def create_dashboard_classes():
             self.output_root = self.results_root
             self.metrics_path = self.results_root / METRICS_FILENAME
             self.default_offset = int(default_offset)
+            self.warmup_skip_seconds = float(warmup_skip_seconds or 0.0)
             self.rows_by_dataset = {name: empty_row(name) for name in DATASETS}
             self.result_cache = {}
             self.estimate_cache = {}
@@ -1247,6 +1291,17 @@ def create_dashboard_classes():
             self.show_rejected_checkbox.setObjectName('RejectedToggle')
             self.show_rejected_checkbox.stateChanged.connect(self._show_rejected_changed)
             panel.body.addWidget(self.show_rejected_checkbox)
+
+            panel.body.addWidget(self._field_label('Warm-up Skip [s]'))
+            self.warmup_skip_spin = QtWidgets.QDoubleSpinBox()
+            self.warmup_skip_spin.setRange(0.0, 120.0)
+            self.warmup_skip_spin.setDecimals(1)
+            self.warmup_skip_spin.setSingleStep(5.0)
+            self.warmup_skip_spin.setValue(self.warmup_skip_seconds)
+            self.warmup_skip_spin.setToolTip(
+                'Ignore the first N seconds of the estimate during evaluation only. '
+                'This does not delete images and does not change VIO processing.')
+            panel.body.addWidget(self.warmup_skip_spin)
 
             panel.body.addWidget(self._button('Evaluate', 'BlueButton', self.evaluate_selected))
 
@@ -2217,6 +2272,11 @@ def create_dashboard_classes():
             self.run_all_button.setEnabled(not running)
             self.stop_button.setEnabled(running)
 
+        def current_warmup_skip_seconds(self):
+            if hasattr(self, 'warmup_skip_spin'):
+                return float(self.warmup_skip_spin.value())
+            return float(getattr(self, 'warmup_skip_seconds', 0.0))
+
         def evaluate_selected(self):
             estimate_path = self.current_estimate_path()
             if estimate_path is None:
@@ -2240,7 +2300,8 @@ def create_dashboard_classes():
             result = None
             try:
                 row, result = evaluate_estimate(
-                    dataset_name, estimate_path, self.datasets_root, self.results_root)
+                    dataset_name, estimate_path, self.datasets_root, self.results_root,
+                    skip_estimate_seconds=self.current_warmup_skip_seconds())
             except Exception as exc:  # Keep the GUI boundary explicit.
                 error = str(exc)
             finally:
@@ -2268,7 +2329,8 @@ def create_dashboard_classes():
             self.append_log(
                 f'Evaluated {Path(estimate_path)} against {row["groundtruth_path"]}: '
                 f'ATE RMSE={row["ate_rmse_m"]:.3f} m, '
-                f'RPE 1s RMSE={metric_text(row["rpe_1s_rmse_m"])}')
+                f'RPE 1s RMSE={metric_text(row["rpe_1s_rmse_m"])}, '
+                f'warm-up skip={row.get("skip_estimate_seconds", 0.0):.1f}s')
             if self.continue_queue_after_eval:
                 self.continue_queue_after_eval = False
                 self._run_next_in_queue()
@@ -2497,7 +2559,7 @@ def create_dashboard_classes():
                 writer.writerow([
                     'dataset', 'status', 'output_file', 'ate_rmse_m',
                     'rpe_1s_rmse_m', 'ate_mean_m', 'aligned_samples',
-                    'overlap_duration_s',
+                    'overlap_duration_s', 'skip_estimate_seconds',
                 ])
                 for dataset_name in DATASETS:
                     row = self.rows_by_dataset[dataset_name]
@@ -2506,6 +2568,7 @@ def create_dashboard_classes():
                         row.get('ate_rmse_m'), row.get('rpe_1s_rmse_m'),
                         row.get('ate_mean_m'), row.get('aligned_samples'),
                         row.get('overlap_duration_s'),
+                        row.get('skip_estimate_seconds', 0.0),
                     ])
             self.append_log(f'Exported summary: {path}')
 
@@ -2572,6 +2635,7 @@ def run_ui_self_check(args):
         args.datasets_root,
         args.results_root,
         args.default_offset,
+        args.warmup_skip_seconds,
         auto_refresh=False,
         auto_evaluate=False,
     )
@@ -2608,7 +2672,9 @@ def main(argv=None):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
     app.setApplicationName('UAV-Airvision Evaluation Dashboard')
     DashboardWindow = create_dashboard_classes()
-    window = DashboardWindow(args.datasets_root, args.results_root, args.default_offset)
+    window = DashboardWindow(
+        args.datasets_root, args.results_root, args.default_offset,
+        args.warmup_skip_seconds)
     window.show()
     return app.exec_()
 
