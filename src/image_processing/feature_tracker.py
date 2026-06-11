@@ -113,7 +113,35 @@ class FeatureTracker:
         curr_pts = np.asarray(curr_pts, dtype=np.float32).reshape(-1, 2)
         track_mask = track_mask.reshape(-1).astype(bool)
 
-        # 6) Отсечение выходящих за рамки
+        # 6) Temporal forward-backward LK check.
+        # LK status alone is not enough: a bad temporal track can keep the same
+        # feature id and corrupt the MSCKF track geometry. Track curr->prev and
+        # reject features that do not return close to their original location.
+        try:
+            import os
+            fb_max_err = float(os.getenv("VIO_TRACK_FB_MAX_ERR", "2.0"))
+        except ValueError:
+            fb_max_err = 2.0
+
+        prev_back_pts, back_mask, _ = cv2.calcOpticalFlowPyrLK(
+            self.curr_cam0_pyramid,
+            self.prev_cam0_pyramid,
+            curr_pts.reshape(-1, 1, 2),
+            prev_cam0_pts.reshape(-1, 1, 2).copy(),
+            **self.lk_params
+        )
+
+        if prev_back_pts is None or back_mask is None:
+            track_mask[:] = False
+        else:
+            prev_back_pts = np.asarray(prev_back_pts, dtype=np.float32).reshape(-1, 2)
+            back_mask = back_mask.reshape(-1).astype(bool)
+            fb_err = np.linalg.norm(prev_cam0_pts - prev_back_pts, axis=1)
+            track_mask &= back_mask
+            track_mask &= np.isfinite(fb_err)
+            track_mask &= (fb_err < fb_max_err)
+
+        # 7) Отсечение выходящих за рамки
         for i, p in enumerate(curr_pts):
             if not track_mask[i]:
                 continue
