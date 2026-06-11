@@ -6,6 +6,7 @@ from .utils import *
 from .feature import BaseFeature
 from .feature import Feature
 from collections import namedtuple
+from .diagnostics import get_diagnostic_logger
 
 def _make_output_filepath():
     base = os.getenv('OUTPUT_DIR', os.path.join('results', 'txts'))
@@ -147,6 +148,9 @@ class MSCKF(object):
         self.is_gravity_set = False
 
         self.is_first_img = True
+        self.diagnostic_logger = get_diagnostic_logger()
+        self._diag_timestamp = None
+        self._diag_context = "none"
         self._outfile = _make_output_filepath()
         self._prepare_output_file()
 
@@ -189,6 +193,7 @@ class MSCKF(object):
 
         if not self.is_gravity_set:
             return
+        self._diag_timestamp = feature_msg.timestamp
         start = time.time()
 
         # Запуск системы при получении первого изображения.
@@ -215,17 +220,36 @@ class MSCKF(object):
         # Добавляет новые наблюдения к существующим признакам или новым признакам в map server.
         self.add_feature_observations(feature_msg)
 
+        if self.diagnostic_logger is not None:
+            imu_state = self.state_server.imu_state
+            self.diagnostic_logger.log_msckf_frame({
+                "timestamp": feature_msg.timestamp,
+                "feature_count": int(len(feature_msg.features)),
+                "tracking_rate": float(self.tracking_rate if self.tracking_rate is not None else -1.0),
+                "map_features": int(len(self.map_server)),
+                "cam_states": int(len(self.state_server.cam_states)),
+                "imu_buffer": int(len(self.imu_msg_buffer)),
+                "position_x": float(imu_state.position[0]),
+                "position_y": float(imu_state.position[1]),
+                "position_z": float(imu_state.position[2]),
+                "velocity_norm": float(np.linalg.norm(imu_state.velocity)),
+            })
+
         print('---add_feature_observations', time.time() - t)
         t = time.time()
 
         # Выполняет обновление по измерениям при необходимости.
         # Очищает признаки и состояния камеры.
+        self._diag_context = "remove_lost_features"
         self.remove_lost_features()
+        self._diag_context = "none"
 
         print('---remove_lost_features    ', time.time() - t)
         t = time.time()
 
+        self._diag_context = "prune_cam_state_buffer"
         self.prune_cam_state_buffer()
+        self._diag_context = "none"
 
         print('---prune_cam_state_buffer  ', time.time() - t)
         print('---msckf elapsed:          ', time.time() - start, f'({feature_msg.timestamp})')
@@ -573,8 +597,44 @@ class MSCKF(object):
 
     def measurement_update(self, H, r):
         if len(H) == 0 or len(r) == 0:
+            if self.diagnostic_logger is not None:
+                self.diagnostic_logger.log_msckf_update({
+                    "timestamp": self._diag_timestamp,
+                    "context": self._diag_context,
+                    "status": "empty",
+                    "H_rows": int(getattr(H, "shape", [0, 0])[0]) if hasattr(H, "shape") else 0,
+                    "H_cols": int(getattr(H, "shape", [0, 0])[1]) if hasattr(H, "shape") and len(H.shape) > 1 else 0,
+                    "r_len": int(len(r)) if hasattr(r, "__len__") else 0,
+                    "r_norm": 0.0,
+                    "delta_norm": 0.0,
+                    "delta_orientation_norm": 0.0,
+                    "delta_velocity_norm": 0.0,
+                    "delta_position_norm": 0.0,
+                    "delta_gyro_bias_norm": 0.0,
+                    "delta_acc_bias_norm": 0.0,
+                    "num_cam_states": int(len(self.state_server.cam_states)),
+                    "map_features": int(len(self.map_server)),
+                })
             return
         if not np.all(np.isfinite(H)) or not np.all(np.isfinite(r)):
+            if self.diagnostic_logger is not None:
+                self.diagnostic_logger.log_msckf_update({
+                    "timestamp": self._diag_timestamp,
+                    "context": self._diag_context,
+                    "status": "nonfinite_input",
+                    "H_rows": int(H.shape[0]),
+                    "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
+                    "r_len": int(len(r)),
+                    "r_norm": float(np.linalg.norm(r)) if np.all(np.isfinite(r)) else -1.0,
+                    "delta_norm": 0.0,
+                    "delta_orientation_norm": 0.0,
+                    "delta_velocity_norm": 0.0,
+                    "delta_position_norm": 0.0,
+                    "delta_gyro_bias_norm": 0.0,
+                    "delta_acc_bias_norm": 0.0,
+                    "num_cam_states": int(len(self.state_server.cam_states)),
+                    "map_features": int(len(self.map_server)),
+                })
             return
 
         # Декомпозирует итоговую матрицу якобиана для снижения вычислительной сложности
@@ -593,14 +653,68 @@ class MSCKF(object):
         try:
             K_transpose = np.linalg.solve(S, H_thin @ P)
         except np.linalg.LinAlgError:
+            if self.diagnostic_logger is not None:
+                self.diagnostic_logger.log_msckf_update({
+                    "timestamp": self._diag_timestamp,
+                    "context": self._diag_context,
+                    "status": "singular_S",
+                    "H_rows": int(H.shape[0]),
+                    "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
+                    "r_len": int(len(r)),
+                    "r_norm": float(np.linalg.norm(r)),
+                    "delta_norm": 0.0,
+                    "delta_orientation_norm": 0.0,
+                    "delta_velocity_norm": 0.0,
+                    "delta_position_norm": 0.0,
+                    "delta_gyro_bias_norm": 0.0,
+                    "delta_acc_bias_norm": 0.0,
+                    "num_cam_states": int(len(self.state_server.cam_states)),
+                    "map_features": int(len(self.map_server)),
+                })
             return
         K = K_transpose.T   # shape (N, K)
 
         delta_x = K @ r_thin
         if not np.all(np.isfinite(delta_x)):
+            if self.diagnostic_logger is not None:
+                self.diagnostic_logger.log_msckf_update({
+                    "timestamp": self._diag_timestamp,
+                    "context": self._diag_context,
+                    "status": "nonfinite_delta",
+                    "H_rows": int(H.shape[0]),
+                    "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
+                    "r_len": int(len(r)),
+                    "r_norm": float(np.linalg.norm(r)),
+                    "delta_norm": -1.0,
+                    "delta_orientation_norm": -1.0,
+                    "delta_velocity_norm": -1.0,
+                    "delta_position_norm": -1.0,
+                    "delta_gyro_bias_norm": -1.0,
+                    "delta_acc_bias_norm": -1.0,
+                    "num_cam_states": int(len(self.state_server.cam_states)),
+                    "map_features": int(len(self.map_server)),
+                })
             return
 
         delta_x_imu = delta_x[:21]
+        if self.diagnostic_logger is not None:
+            self.diagnostic_logger.log_msckf_update({
+                "timestamp": self._diag_timestamp,
+                "context": self._diag_context,
+                "status": "applied",
+                "H_rows": int(H.shape[0]),
+                "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
+                "r_len": int(len(r)),
+                "r_norm": float(np.linalg.norm(r)),
+                "delta_norm": float(np.linalg.norm(delta_x)),
+                "delta_orientation_norm": float(np.linalg.norm(delta_x_imu[:3])),
+                "delta_velocity_norm": float(np.linalg.norm(delta_x_imu[6:9])),
+                "delta_position_norm": float(np.linalg.norm(delta_x_imu[12:15])),
+                "delta_gyro_bias_norm": float(np.linalg.norm(delta_x_imu[3:6])),
+                "delta_acc_bias_norm": float(np.linalg.norm(delta_x_imu[9:12])),
+                "num_cam_states": int(len(self.state_server.cam_states)),
+                "map_features": int(len(self.map_server)),
+            })
 
         if (np.linalg.norm(delta_x_imu[6:9]) > 0.5 or 
             np.linalg.norm(delta_x_imu[12:15]) > 1.0):
@@ -652,7 +766,22 @@ class MSCKF(object):
 
         threshold = self.chi_squared_test_table.get(dof, chi2.ppf(0.95, dof))
 
-        if(gamma < threshold):
+        accepted = bool(gamma < threshold)
+
+        if self.diagnostic_logger is not None:
+            self.diagnostic_logger.log_msckf_gating({
+                "timestamp": self._diag_timestamp,
+                "context": self._diag_context,
+                "dof": int(dof),
+                "gamma": float(gamma),
+                "threshold": float(threshold),
+                "accepted": int(accepted),
+                "r_norm": float(np.linalg.norm(r)),
+                "H_rows": int(H.shape[0]),
+                "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
+            })
+
+        if accepted:
             return True
         else:
             return False

@@ -31,6 +31,7 @@ class StereoMatcher:
         self.cam0_model      = cam0_camera_model
         self.cam1_model      = cam1_camera_model
         self.stereo_threshold= stereo_threshold
+        self.last_stats      = {}
 
     @staticmethod
     def _point_line_distance(point, line):
@@ -52,9 +53,27 @@ class StereoMatcher:
             inlier_mask: булевый массив, True для валидных соответствий.
         """
         if len(cam0_points) == 0:
+            self.last_stats = {
+                "input": 0,
+                "lk_forward_success": 0,
+                "lk_reverse_success": 0,
+                "fb_inliers": 0,
+                "bounds_inliers": 0,
+                "epipolar_inliers": 0,
+                "output_inliers": 0,
+            }
             return np.array([]), np.array([], dtype=bool)
 
         pts0 = np.asarray(cam0_points, dtype=np.float32).reshape(-1, 2)
+        self.last_stats = {
+            "input": int(len(pts0)),
+            "lk_forward_success": 0,
+            "lk_reverse_success": 0,
+            "fb_inliers": 0,
+            "bounds_inliers": 0,
+            "epipolar_inliers": 0,
+            "output_inliers": 0,
+        }
 
         R0to1 = self.R_cam1_imu.T @ self.R_cam0_imu
         und0 = self.cam0_model.undistort_points(
@@ -80,6 +99,7 @@ class StereoMatcher:
 
         p1 = np.asarray(p1, dtype=np.float32).reshape(-1, 2)
         track_mask = track_mask.reshape(-1).astype(bool)
+        self.last_stats["lk_forward_success"] = int(np.sum(track_mask))
 
         p0r, rev_mask, _ = cv2.calcOpticalFlowPyrLK(
             self.pyr1, self.pyr0,
@@ -93,6 +113,8 @@ class StereoMatcher:
             p0r = np.asarray(p0r, dtype=np.float32).reshape(-1, 2)
             rev_mask = rev_mask.reshape(-1).astype(bool)
 
+        self.last_stats["lk_reverse_success"] = int(np.sum(rev_mask))
+
         err = np.linalg.norm(pts0 - p0r, axis=1)
         disp = np.abs(proj1[:,1] - p1[:,1])
 
@@ -101,6 +123,7 @@ class StereoMatcher:
                   np.isfinite(err) &
                   (err < 3) &
                   (disp < 20))
+        self.last_stats["fb_inliers"] = int(np.sum(inlier))
 
         h, w = self.pyr1.shape[:2]
         for i, pt in enumerate(p1):
@@ -109,6 +132,8 @@ class StereoMatcher:
             x,y = pt
             if not np.isfinite(pt).all() or x<0 or x>=w or y<0 or y>=h:
                 inlier[i] = False
+
+        self.last_stats["bounds_inliers"] = int(np.sum(inlier))
 
         t01 = self.R_cam1_imu.T @ (self.t_cam0_imu - self.t_cam1_imu)
         E = skew(t01) @ R0to1
@@ -134,5 +159,8 @@ class StereoMatcher:
             err_epi = self._point_line_distance(u1, line)
             if err_epi > self.stereo_threshold * norm_unit:
                 inlier[i] = False
+
+        self.last_stats["epipolar_inliers"] = int(np.sum(inlier))
+        self.last_stats["output_inliers"] = int(np.sum(inlier))
 
         return p1, inlier

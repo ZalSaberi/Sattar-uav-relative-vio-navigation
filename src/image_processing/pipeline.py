@@ -1,5 +1,6 @@
 import cv2
 from collections import defaultdict
+from ..diagnostics import get_diagnostic_logger
 
 from .imu_processor import IMUProcessor
 from .pyramid_builder import PyramidBuilder
@@ -39,6 +40,7 @@ class ImageProcessingPipeline:
         self.prev_features   = [[] for _ in range(config.grid_num)]
         self.curr_features   = [[] for _ in range(config.grid_num)]
         self.num_features    = defaultdict(int)
+        self.diagnostic_logger = get_diagnostic_logger()
 
         self.first_frame = True
 
@@ -75,6 +77,8 @@ class ImageProcessingPipeline:
             self.cam1_camera_model,
             self.config.stereo_threshold
         )
+
+        frame_kind = "initialization" if self.first_frame else "tracking"
 
         if self.first_frame:
             initializer = FeatureInitializer(
@@ -147,6 +151,29 @@ class ImageProcessingPipeline:
         publisher.curr_features     = self.curr_features
 
         feature_msg = publisher.publish()
+
+        if self.diagnostic_logger is not None:
+            stereo_stats = getattr(stereo_matcher, "last_stats", {}) or {}
+            curr_flat = [f for cell in self.curr_features for f in cell]
+            self.diagnostic_logger.log_image_pipeline({
+                "timestamp": cam0_msg.timestamp,
+                "frame_kind": frame_kind,
+                "before_tracking": int(self.num_features.get("before_tracking", 0)),
+                "after_tracking": int(self.num_features.get("after_tracking", 0)),
+                "after_matching": int(self.num_features.get("after_matching", 0)),
+                "after_ransac": int(self.num_features.get("after_ransac", 0)),
+                "published_features": int(len(feature_msg.features)),
+                "next_feature_id": int(self.next_feature_id),
+                "curr_grid_nonempty": int(sum(1 for cell in self.curr_features if len(cell) > 0)),
+                "curr_grid_total": int(len(self.curr_features)),
+                "stereo_input": int(stereo_stats.get("input", 0)),
+                "stereo_lk_forward_success": int(stereo_stats.get("lk_forward_success", 0)),
+                "stereo_lk_reverse_success": int(stereo_stats.get("lk_reverse_success", 0)),
+                "stereo_fb_inliers": int(stereo_stats.get("fb_inliers", 0)),
+                "stereo_bounds_inliers": int(stereo_stats.get("bounds_inliers", 0)),
+                "stereo_epipolar_inliers": int(stereo_stats.get("epipolar_inliers", 0)),
+                "stereo_output_inliers": int(stereo_stats.get("output_inliers", 0)),
+            })
 
         self.prev_cam0_msg = cam0_msg
         self.prev_features = self.curr_features
