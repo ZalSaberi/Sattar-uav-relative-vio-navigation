@@ -962,6 +962,53 @@ class MSCKF(object):
 
         return stats
 
+
+    def _prune_geometry_weight(self, feature, cam_state_ids):
+        """
+        Soft weighting for weak-geometry prune features.
+
+        We do not reject the feature. We only reduce its influence when
+        the prune update uses very weak geometry.
+        """
+        if os.getenv("MSCKF_PRUNE_GEOMETRY_WEIGHTING", "0") != "1":
+            return 1.0
+
+        stats = self._feature_geometry_stats(feature, cam_state_ids)
+
+        used_len = int(stats.get("used_len", 0))
+        depth = float(stats.get("depth0_median", float("nan")))
+        parallax = float(stats.get("used_parallax_deg", float("nan")))
+        baseline = float(stats.get("used_baseline", float("nan")))
+
+        max_used_len = int(os.getenv("MSCKF_PRUNE_WEIGHT_MAX_USED_LEN", "2"))
+        min_parallax_deg = float(os.getenv("MSCKF_PRUNE_WEIGHT_MIN_PARALLAX_DEG", "0.05"))
+        max_depth = float(os.getenv("MSCKF_PRUNE_WEIGHT_MAX_DEPTH", "8.0"))
+        min_baseline = float(os.getenv("MSCKF_PRUNE_WEIGHT_MIN_BASELINE", "0.02"))
+        min_weight = float(os.getenv("MSCKF_PRUNE_GEOMETRY_MIN_WEIGHT", "0.5"))
+
+        min_weight = float(np.clip(min_weight, 0.05, 1.0))
+
+        if used_len <= max_used_len:
+            weak_parallax = (
+                np.isfinite(depth) and
+                np.isfinite(parallax) and
+                depth > max_depth and
+                parallax < min_parallax_deg
+            )
+
+            weak_baseline = (
+                np.isfinite(depth) and
+                np.isfinite(baseline) and
+                depth > max_depth and
+                baseline < min_baseline
+            )
+
+            if weak_parallax or weak_baseline:
+                return min_weight
+
+        return 1.0
+
+
     def _log_feature_geometry(self, feature, cam_state_ids, H_xj, r_j, accepted, context):
         if os.getenv("VIO_DIAGNOSTICS") != "1":
             return
@@ -1154,9 +1201,18 @@ class MSCKF(object):
             self._log_feature_geometry(feature, involved_cam_state_ids, H_xj, r_j, accepted,
                                        "prune_cam_state_buffer")
             if accepted:
-                H_x[stack_count:stack_count+H_xj.shape[0], :H_xj.shape[1]] = H_xj
-                r[stack_count:stack_count+len(r_j)] = r_j
-                stack_count += H_xj.shape[0]
+                prune_weight = self._prune_geometry_weight(feature, involved_cam_state_ids)
+                if prune_weight < 1.0:
+                    weight_scale = np.sqrt(prune_weight)
+                    H_xj_used = H_xj * weight_scale
+                    r_j_used = r_j * weight_scale
+                else:
+                    H_xj_used = H_xj
+                    r_j_used = r_j
+
+                H_x[stack_count:stack_count+H_xj_used.shape[0], :H_xj_used.shape[1]] = H_xj_used
+                r[stack_count:stack_count+len(r_j_used)] = r_j_used
+                stack_count += H_xj_used.shape[0]
 
             for cam_id in involved_cam_state_ids:
                 del feature.observations[cam_id]
