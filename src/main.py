@@ -51,6 +51,13 @@ def main(argv=None):
     os.environ['TIME_OFFSET']  = str(int(args.offset))
     os.environ['OUTPUT_DIR'] = args.output_dir
     os.environ['APPEND_OUTPUT'] = '1' if args.append_output else '0'
+    if args.output_dir is not None:
+        os.environ['OUTPUT_DIR'] = args.output_dir
+    else:
+        os.environ.setdefault('OUTPUT_DIR', os.path.join('results', 'txts'))
+
+    print(f"[main] OUTPUT_DIR={os.environ['OUTPUT_DIR']}")
+
 
     from .modules.vio import VIO
 
