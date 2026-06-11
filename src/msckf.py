@@ -585,7 +585,26 @@ class MSCKF(object):
         if stack_count <= 3 or not np.all(np.isfinite(H_xj)) or not np.all(np.isfinite(r_j)):
             return np.empty((0, H_xj.shape[1])), np.empty(0)
 
-        U, _, _ = np.linalg.svd(H_fj)
+        try:
+            U, s_f, _ = np.linalg.svd(H_fj, full_matrices=True)
+        except np.linalg.LinAlgError:
+            return np.empty((0, H_xj.shape[1])), np.empty(0)
+
+        if len(s_f) < 3 or not np.all(np.isfinite(s_f)) or s_f[0] <= 0.0:
+            return np.empty((0, H_xj.shape[1])), np.empty(0)
+
+        tol_scale = float(os.getenv("MSCKF_FEATURE_JACOBIAN_SVD_TOL_SCALE", "1.0"))
+        tol = tol_scale * np.finfo(float).eps * max(H_fj.shape) * s_f[0]
+        rank_f = int(np.sum(s_f > tol))
+
+        if rank_f < 3:
+            return np.empty((0, H_xj.shape[1])), np.empty(0)
+
+        max_cond = float(os.getenv("MSCKF_FEATURE_JACOBIAN_MAX_COND", "100000000.0"))
+        cond_f = float(s_f[0] / s_f[2]) if s_f[2] > 0.0 else float("inf")
+        if not np.isfinite(cond_f) or cond_f > max_cond:
+            return np.empty((0, H_xj.shape[1])), np.empty(0)
+
         A = U[:, 3:]
 
         H_x = A.T @ H_xj
