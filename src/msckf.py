@@ -817,9 +817,11 @@ class MSCKF(object):
             cam_state.position += delta_x_cam[3:]
 
         I_KH = np.identity(len(K)) - K @ H_thin
-        # state_cov = I_KH @ self.state_server.state_cov @ I_KH.T + (
-        #     K @ K.T * self.config.observation_noise)
-        state_cov = I_KH @ self.state_server.state_cov   # ?
+        R_obs = self.config.observation_noise * np.identity(len(H_thin))
+        state_cov = (
+            I_KH @ self.state_server.state_cov @ I_KH.T +
+            K @ R_obs @ K.T
+        )
 
         self.state_server.state_cov = (state_cov + state_cov.T) / 2.
 
