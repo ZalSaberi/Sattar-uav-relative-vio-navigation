@@ -647,8 +647,13 @@ class MSCKF(object):
             H_thin = H   # shape (M, N)
             r_thin = r   # shape (M)
 
+        obs_noise_scale = float(os.getenv("MSCKF_OBS_NOISE_SCALE", "1.0"))
+        if not np.isfinite(obs_noise_scale) or obs_noise_scale <= 0.0:
+            obs_noise_scale = 1.0
+        effective_observation_noise = self.config.observation_noise * obs_noise_scale
+
         P = self.state_server.state_cov
-        S = H_thin @ P @ H_thin.T + (self.config.observation_noise * 
+        S = H_thin @ P @ H_thin.T + (effective_observation_noise * 
             np.identity(len(H_thin)))
 
         def _diag_matrix_stats(matrix):
@@ -737,6 +742,8 @@ class MSCKF(object):
                         "timestamp": self._diag_timestamp,
                         "context": self._diag_context,
                         "status": "applied",
+                        "obs_noise_scale": float(obs_noise_scale),
+                        "effective_observation_noise": float(effective_observation_noise),
                         "H_rows": int(H.shape[0]),
                         "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
                         "H_thin_rows": int(H_thin.shape[0]),
