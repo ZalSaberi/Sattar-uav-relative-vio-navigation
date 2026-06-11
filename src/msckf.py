@@ -965,13 +965,11 @@ class MSCKF(object):
 
     def _prune_geometry_weight(self, feature, cam_state_ids):
         """
-        Adaptive soft weighting for weak-geometry prune features.
+        Extreme-only soft weighting for weak-geometry prune features.
 
-        Instead of assigning the same weight to every weak feature, this computes
-        a continuous geometry score from parallax, baseline, and depth.
-
-        Very weak geometry -> weight approaches min_weight.
-        Mildly weak geometry -> weight stays closer to 1.0.
+        This version avoids broad downweighting. A prune feature is downweighted
+        only when it is far and has either extremely small parallax, or jointly
+        weak parallax and weak baseline.
         """
         if os.getenv("MSCKF_PRUNE_GEOMETRY_WEIGHTING", "0") != "1":
             return 1.0
@@ -989,14 +987,19 @@ class MSCKF(object):
             max_used_len = 2
 
         try:
-            min_parallax_deg = float(os.getenv("MSCKF_PRUNE_WEIGHT_MIN_PARALLAX_DEG", "0.05"))
+            max_depth = float(os.getenv("MSCKF_PRUNE_WEIGHT_MAX_DEPTH", "10.0"))
         except ValueError:
-            min_parallax_deg = 0.05
+            max_depth = 10.0
 
         try:
-            max_depth = float(os.getenv("MSCKF_PRUNE_WEIGHT_MAX_DEPTH", "8.0"))
+            min_parallax_deg = float(os.getenv("MSCKF_PRUNE_WEIGHT_MIN_PARALLAX_DEG", "0.03"))
         except ValueError:
-            max_depth = 8.0
+            min_parallax_deg = 0.03
+
+        try:
+            extreme_parallax_deg = float(os.getenv("MSCKF_PRUNE_WEIGHT_EXTREME_PARALLAX_DEG", "0.015"))
+        except ValueError:
+            extreme_parallax_deg = 0.015
 
         try:
             min_baseline = float(os.getenv("MSCKF_PRUNE_WEIGHT_MIN_BASELINE", "0.02"))
@@ -1004,17 +1007,11 @@ class MSCKF(object):
             min_baseline = 0.02
 
         try:
-            min_weight = float(os.getenv("MSCKF_PRUNE_GEOMETRY_MIN_WEIGHT", "0.65"))
+            min_weight = float(os.getenv("MSCKF_PRUNE_GEOMETRY_MIN_WEIGHT", "0.5"))
         except ValueError:
-            min_weight = 0.65
-
-        try:
-            adaptive_power = float(os.getenv("MSCKF_PRUNE_ADAPTIVE_POWER", "1.0"))
-        except ValueError:
-            adaptive_power = 1.0
+            min_weight = 0.5
 
         min_weight = float(np.clip(min_weight, 0.05, 1.0))
-        adaptive_power = max(adaptive_power, 0.1)
 
         if used_len > max_used_len:
             return 1.0
@@ -1022,39 +1019,22 @@ class MSCKF(object):
         if not (np.isfinite(depth) and depth > max_depth):
             return 1.0
 
-        weak_parallax = (
+        extreme_parallax = (
             np.isfinite(parallax) and
-            parallax < min_parallax_deg
+            parallax < extreme_parallax_deg
         )
-        weak_baseline = (
+
+        jointly_weak_geometry = (
+            np.isfinite(parallax) and
             np.isfinite(baseline) and
+            parallax < min_parallax_deg and
             baseline < min_baseline
         )
 
-        if not (weak_parallax or weak_baseline):
-            return 1.0
+        if extreme_parallax or jointly_weak_geometry:
+            return min_weight
 
-        if np.isfinite(parallax) and min_parallax_deg > 0.0:
-            parallax_score = float(np.clip(parallax / min_parallax_deg, 0.0, 1.0))
-        else:
-            parallax_score = 1.0
-
-        if np.isfinite(baseline) and min_baseline > 0.0:
-            baseline_score = float(np.clip(baseline / min_baseline, 0.0, 1.0))
-        else:
-            baseline_score = 1.0
-
-        if np.isfinite(depth) and depth > 1e-9:
-            depth_score = float(np.clip(max_depth / depth, 0.0, 1.0))
-        else:
-            depth_score = 1.0
-
-        geometry_score = (0.75 * parallax_score + 0.25 * baseline_score) * depth_score
-        geometry_score = float(np.clip(geometry_score, 0.0, 1.0))
-        geometry_score = geometry_score ** adaptive_power
-
-        weight = min_weight + (1.0 - min_weight) * geometry_score
-        return float(np.clip(weight, min_weight, 1.0))
+        return 1.0
 
 
     def _log_feature_geometry(self, feature, cam_state_ids, H_xj, r_j, accepted, context):
