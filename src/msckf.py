@@ -650,6 +650,25 @@ class MSCKF(object):
         P = self.state_server.state_cov
         S = H_thin @ P @ H_thin.T + (self.config.observation_noise * 
             np.identity(len(H_thin)))
+
+        def _diag_matrix_stats(matrix):
+            try:
+                svals = np.linalg.svd(matrix, compute_uv=False)
+                if len(svals) == 0:
+                    return 0, 0.0, 0.0, -1.0
+
+                smax = float(svals[0])
+                smin = float(svals[-1])
+                tol = np.finfo(float).eps * max(matrix.shape) * smax
+                rank = int(np.sum(svals > tol))
+                cond = float(smax / smin) if smin > 0.0 else float("inf")
+                return rank, smin, smax, cond
+            except Exception:
+                return -1, -1.0, -1.0, -1.0
+
+        H_thin_rank, H_thin_smin, H_thin_smax, H_thin_cond = _diag_matrix_stats(H_thin)
+        S_rank, S_smin, S_smax, S_cond = _diag_matrix_stats(S)
+        r_thin_norm = float(np.linalg.norm(r_thin))
         try:
             K_transpose = np.linalg.solve(S, H_thin @ P)
         except np.linalg.LinAlgError:
@@ -697,6 +716,62 @@ class MSCKF(object):
             return
 
         delta_x_imu = delta_x[:21]
+
+        if os.getenv("VIO_DIAGNOSTICS") == "1":
+            try:
+                import csv
+                from pathlib import Path
+
+                diag_dir = os.getenv("VIO_DIAGNOSTICS_DIR")
+                if diag_dir:
+                    cond_path = Path(diag_dir) / "msckf_conditioning.csv"
+                    cond_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    r_norm = float(np.linalg.norm(r))
+                    delta_norm = float(np.linalg.norm(delta_x))
+                    delta_pos_norm = float(np.linalg.norm(delta_x_imu[12:15]))
+                    delta_vel_norm = float(np.linalg.norm(delta_x_imu[6:9]))
+                    eps = 1e-12
+
+                    row = {
+                        "timestamp": self._diag_timestamp,
+                        "context": self._diag_context,
+                        "status": "applied",
+                        "H_rows": int(H.shape[0]),
+                        "H_cols": int(H.shape[1]) if len(H.shape) > 1 else 0,
+                        "H_thin_rows": int(H_thin.shape[0]),
+                        "H_thin_cols": int(H_thin.shape[1]) if len(H_thin.shape) > 1 else 0,
+                        "r_norm": r_norm,
+                        "r_thin_norm": r_thin_norm,
+                        "H_thin_rank": H_thin_rank,
+                        "H_thin_smin": H_thin_smin,
+                        "H_thin_smax": H_thin_smax,
+                        "H_thin_cond": H_thin_cond,
+                        "S_rank": S_rank,
+                        "S_smin": S_smin,
+                        "S_smax": S_smax,
+                        "S_cond": S_cond,
+                        "K_norm": float(np.linalg.norm(K)),
+                        "delta_norm": delta_norm,
+                        "delta_position_norm": delta_pos_norm,
+                        "delta_velocity_norm": delta_vel_norm,
+                        "delta_over_r": delta_norm / (r_norm + eps),
+                        "delta_pos_over_r": delta_pos_norm / (r_norm + eps),
+                        "delta_pos_over_rthin": delta_pos_norm / (r_thin_norm + eps),
+                        "num_cam_states": int(len(self.state_server.cam_states)),
+                        "map_features": int(len(self.map_server)),
+                    }
+
+                    fields = list(row.keys())
+                    write_header = not cond_path.exists()
+                    with cond_path.open("a", newline="") as handle:
+                        writer = csv.DictWriter(handle, fieldnames=fields)
+                        if write_header:
+                            writer.writeheader()
+                        writer.writerow(row)
+
+            except Exception as exc:
+                print(f"[diagnostics] failed to write msckf_conditioning.csv: {exc}")
         if self.diagnostic_logger is not None:
             self.diagnostic_logger.log_msckf_update({
                 "timestamp": self._diag_timestamp,
