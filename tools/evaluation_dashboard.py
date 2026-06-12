@@ -2319,6 +2319,7 @@ def create_dashboard_classes():
                     stripped,
                 )
                 if match:
+                    self._vio_pose_stdout_seen = True
                     try:
                         timestamp = timestamp_to_seconds(float(match.group(1)))
                     except ValueError:
@@ -2352,6 +2353,8 @@ def create_dashboard_classes():
                 # Backward-compatible fallback for old stdout format.
                 # This is only used if the new VIO_POSE line is not present.
                 if stripped.startswith('timestamp:') or 'timestamp:' in stripped:
+                    if os.getenv("DASHBOARD_LEGACY_STDOUT_POSE", "0").lower() not in ("1", "true", "yes", "on"):
+                        continue
                     try:
                         raw_timestamp = stripped.split('timestamp:', 1)[1].strip().split()[0]
                         self._last_stdout_timestamp = timestamp_to_seconds(float(raw_timestamp))
@@ -2360,6 +2363,8 @@ def create_dashboard_classes():
                     continue
 
                 if stripped.startswith('position:') or 'position:' in stripped:
+                    if os.getenv("DASHBOARD_LEGACY_STDOUT_POSE", "0").lower() not in ("1", "true", "yes", "on"):
+                        continue
                     position = self._parse_stdout_vector(stripped)
                     if position is None:
                         continue
