@@ -190,12 +190,43 @@ def display_path(path, root=None, max_chars=42):
 
 
 def timestamp_to_seconds(value):
-    value = float(value)
-    if abs(value) > 1e12:
-        return value * 1e-9
+    """Normalize EuRoC-style timestamps to seconds.
+
+    EuRoC image/IMU/ground-truth files usually store timestamps in nanoseconds,
+    for example:
+
+        1403636616713555574
+
+    The live VIO telemetry emitted by MSCKF is already in seconds, for example:
+
+        1403636616.713555574
+
+    A wrong threshold here breaks live synchronization. If a seconds timestamp
+    is divided by 1e9 again, it becomes around 1.4 seconds and the dashboard
+    thinks every VIO pose is before the first camera frame. That keeps the
+    camera preview frozen at frame 1 while the trajectory keeps moving.
+    """
+    try:
+        value = float(value)
+    except Exception:
+        return value
+
+    abs_value = abs(value)
+
+    # Nanoseconds: EuRoC camera filenames and CSV timestamps are around 1e18.
+    if abs_value >= 1.0e17:
+        return value * 1.0e-9
+
+    # Microseconds, if ever used by a dataset/tool.
+    if abs_value >= 1.0e14:
+        return value * 1.0e-6
+
+    # Milliseconds, if ever used by a dataset/tool.
+    if abs_value >= 1.0e11:
+        return value * 1.0e-3
+
+    # Seconds. EuRoC absolute seconds are around 1.4e9 and must stay unchanged.
     return value
-
-
 def output_file_for_run(output_dir, dataset_name, offset):
     resolved = DATASET_REGISTRY.resolve(dataset_name, '.')
     return resolved.expected_output_path(output_dir, offset)
