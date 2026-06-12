@@ -1245,6 +1245,16 @@ class MSCKF(object):
         print('   timestamp:', imu_state.timestamp)
         print('   orientation:', imu_state.orientation)
         print('   position:', imu_state.position)
+        try:
+            _vio_event_timestamp = float(time if time is not None else imu_state.timestamp)
+            _vio_px, _vio_py, _vio_pz = [float(v) for v in imu_state.position[:3]]
+            print(
+                f'VIO_POSE timestamp={_vio_event_timestamp:.9f} '
+                f'position=[{_vio_px:.9f} {_vio_py:.9f} {_vio_pz:.9f}]',
+                flush=True,
+            )
+        except Exception:
+            pass
         print('   velocity:', imu_state.velocity)
         print()
         

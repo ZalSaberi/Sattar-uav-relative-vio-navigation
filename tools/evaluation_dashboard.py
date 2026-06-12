@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import bisect
 import csv
 import json
 import os
@@ -1933,84 +1934,166 @@ def create_dashboard_classes():
                 self.progress_bar.setValue(max(0, min(100, progress)))
 
 
+
+
+
         def _update_camera_preview_for_timestamp(self, timestamp):
-            if not self.camera_frame_times:
+            # Synchronize cam0 preview to the same dataset timestamp used by
+            # the live VIO pose.
+            #
+            # The most reliable timestamp source for EuRoC images is the image
+            # filename itself:
+            #
+            #   mav0/cam0/data/1403636616713555574.png
+            #
+            # That filename is a nanosecond timestamp. The VIO live telemetry is
+            # emitted in seconds. Both are normalized to seconds before matching.
+            if not self.camera_frame_paths:
                 return
 
-            # While the preview timer is active, it owns camera playback.
-            # Timestamp-driven updates can jump around and create visible stutter.
-            if hasattr(self, 'preview_timer') and self.preview_timer.isActive():
+            try:
+                target_time = timestamp_to_seconds(float(timestamp))
+            except Exception:
                 return
 
-            index = int(np.searchsorted(self.camera_frame_times, timestamp, side='left'))
-            if index >= len(self.camera_frame_times):
-                index = len(self.camera_frame_times) - 1
-            if index > 0:
-                previous = abs(self.camera_frame_times[index - 1] - timestamp)
-                current = abs(self.camera_frame_times[index] - timestamp)
-                if previous < current:
-                    index -= 1
-            self._show_camera_frame(index)
+            # Build and cache camera frame timestamps from file names first.
+            # This avoids relying on dashboard-side fields whose units or names
+            # may differ across versions.
+            try:
+                cache_key = (
+                    len(self.camera_frame_paths),
+                    str(self.camera_frame_paths[0]),
+                    str(self.camera_frame_paths[-1]),
+                )
+            except Exception:
+                cache_key = None
 
+            if (
+                getattr(self, "_camera_path_timestamp_cache_key", None) != cache_key
+                or not hasattr(self, "_camera_path_timestamp_cache")
+            ):
+                pairs = []
 
+                for index, frame_path in enumerate(self.camera_frame_paths):
+                    try:
+                        stem = Path(str(frame_path)).stem
+                        raw_time = float(stem)
+                        t = timestamp_to_seconds(raw_time)
+                    except Exception:
+                        continue
+
+                    if t == t:
+                        pairs.append((t, index))
+
+                # Fallback: use camera_frame_times only if filename timestamps
+                # are unavailable.
+                if not pairs:
+                    raw_times = getattr(self, "camera_frame_times", None)
+                    if raw_times is not None:
+                        try:
+                            for index, raw_time in enumerate(raw_times):
+                                if index >= len(self.camera_frame_paths):
+                                    break
+                                try:
+                                    t = timestamp_to_seconds(float(raw_time))
+                                except Exception:
+                                    continue
+                                if t == t:
+                                    pairs.append((t, index))
+                        except Exception:
+                            pass
+
+                pairs.sort(key=lambda item: item[0])
+
+                self._camera_path_timestamp_cache = pairs
+                self._camera_path_timestamp_cache_key = cache_key
+
+            pairs = getattr(self, "_camera_path_timestamp_cache", None)
+            if not pairs:
+                return
+
+            times = [item[0] for item in pairs]
+            indices = [item[1] for item in pairs]
+
+            first_time = times[0]
+            last_time = times[-1]
+
+            # If the VIO timestamp ever arrives as relative run time, map it to
+            # the absolute camera timeline. Absolute EuRoC seconds are around
+            # 1.4e9, while relative run times are small.
+            if target_time < first_time - 1.0 and target_time < 1.0e6:
+                target_time = first_time + target_time
+
+            if target_time <= first_time:
+                target_index = indices[0]
+            elif target_time >= last_time:
+                target_index = indices[-1]
+            else:
+                pos = bisect.bisect_left(times, target_time)
+
+                before_pos = max(0, pos - 1)
+                after_pos = min(len(times) - 1, pos)
+
+                if abs(times[before_pos] - target_time) <= abs(times[after_pos] - target_time):
+                    target_index = indices[before_pos]
+                else:
+                    target_index = indices[after_pos]
+
+            if target_index != self.camera_frame_index:
+                self._show_camera_frame(target_index)
+
+            # Update status with the actual synchronized frame index.
+            try:
+                rel_time = max(0.0, target_time - first_time)
+                self._set_status_values(
+                    frame=f"{target_index + 1} / {len(self.camera_frame_paths)}",
+                    time=f"{rel_time:.3f}s",
+                    fps=f"cam {target_index + 1} / pose {self.live_view.pose_count}",
+                )
+            except Exception:
+                pass
+
+            # Debug mode:
+            # DASHBOARD_SYNC_DEBUG=1 python tools/evaluation_dashboard.py ...
+            if os.getenv("DASHBOARD_SYNC_DEBUG", "0").lower() in ("1", "true", "yes", "on"):
+                try:
+                    self.append_log(
+                        "[SYNC] "
+                        f"target={target_time:.6f} "
+                        f"range=[{first_time:.6f}, {last_time:.6f}] "
+                        f"frame={target_index + 1}/{len(self.camera_frame_paths)} "
+                        f"pose={self.live_view.pose_count}"
+                    )
+                except Exception:
+                    pass
         def _advance_preview(self):
-            # Do not let the camera preview free-run during an active VIO process.
-            # During a real run, the preview must follow VIO timestamps parsed from
-            # stdout via _update_camera_preview_for_timestamp(). Otherwise the image
-            # panel can reach the end of the dataset while the trajectory is still
-            # being produced by the MSCKF backend.
+            # The preview timer must not drive the live camera during normal use.
+            # During a VIO run, camera frames are updated by VIO_POSE timestamps
+            # inside _read_process_output(). This keeps image, console timestamp,
+            # and trajectory pose tied to the same dataset time.
+            #
+            # A free-running preview can still be enabled manually for debugging:
+            #   DASHBOARD_FREE_RUN_PREVIEW=1 python tools/evaluation_dashboard.py ...
             free_run_enabled = os.getenv("DASHBOARD_FREE_RUN_PREVIEW", "0").lower() in (
                 "1", "true", "yes", "on"
             )
-            if not free_run_enabled and getattr(self, "process", None) is not None:
-                try:
-                    if self.process.state() != QtCore.QProcess.NotRunning:
-                        return
-                except Exception:
-                    return
+            if not free_run_enabled:
+                return
 
             if not self.camera_frame_paths:
                 return
 
-            now = time.time()
-            target_fps = max(1.0, float(getattr(self, 'preview_target_fps', 10.0)))
-
-            # Guard against accidental double ticks.
-            last_tick = getattr(self, '_last_preview_tick', 0.0)
-            if last_tick and now - last_tick < (0.50 / target_fps):
-                return
-            self._last_preview_tick = now
-
-            step = 1
-
-            if len(self.camera_frame_times) > 3:
-                try:
-                    sample = np.diff(np.asarray(self.camera_frame_times[:min(120, len(self.camera_frame_times))], dtype=float))
-                    sample = sample[np.isfinite(sample)]
-                    sample = sample[sample > 0]
-                    if len(sample):
-                        camera_dt = float(np.median(sample))
-                        step = max(1, int(round((1.0 / target_fps) / camera_dt)))
-                except Exception:
-                    step = 1
-            else:
-                step = max(1, len(self.camera_frame_paths) // 1200)
-
+            step = max(1, len(self.camera_frame_paths) // 1200)
             next_index = self.camera_frame_index + step
             if next_index >= len(self.camera_frame_paths):
                 next_index = len(self.camera_frame_paths) - 1
 
-            self._show_camera_frame(next_index, status_throttle=True)
+            self._show_camera_frame(next_index)
             self.preview_frames_shown += 1
 
             if self.run_started_at is not None:
                 elapsed = max(1e-3, time.time() - self.run_started_at)
-                measured_fps = self.preview_frames_shown / elapsed
-
-                if now - getattr(self, '_last_preview_status_update', 0.0) >= 0.20:
-                    self._set_status_values(fps=f'{measured_fps:.1f}')
-
-
+                self._set_status_values(fps=f'{self.preview_frames_shown / elapsed:.1f}')
         def _populate_estimates(self, dataset_name):
             include_rejected = self.show_rejected_checkbox.isChecked()
             estimates = find_estimates(
@@ -2173,6 +2256,7 @@ def create_dashboard_classes():
                 return None
             return np.asarray(values[:3], dtype=float)
 
+
         def _read_process_output(self):
             if self.process is None:
                 return
@@ -2182,20 +2266,66 @@ def create_dashboard_classes():
                 return
 
             lines = text.splitlines()
-            recent_lines = lines[-40:]
-            self.append_log('\n'.join(recent_lines))
 
-            for line in recent_lines:
+            # Keep the visible console compact, but parse every received line.
+            # Parsing only the last few visible console lines can drop the
+            # timestamp that belongs to a pose update and desynchronize the GUI.
+            for line in lines[-40:]:
+                self.append_log(line)
+
+            for line in lines:
                 stripped = line.strip()
+                if not stripped:
+                    continue
 
-                if stripped.startswith('timestamp:') or 'timestamp:' in stripped:
+                # Preferred synchronized telemetry format.
+                #
+                # One VIO_POSE line contains both the dataset timestamp and the
+                # estimated position. The camera preview and live trajectory are
+                # updated from this same event, so they stay synchronized.
+                match = re.search(
+                    r'\bVIO_POSE\b.*?timestamp=([^\s]+).*?position=\[([^\]]+)\]',
+                    stripped,
+                )
+                if match:
                     try:
-                        timestamp = float(stripped.split('timestamp:', 1)[1].strip().split()[0])
-                    except (IndexError, ValueError):
+                        timestamp = timestamp_to_seconds(float(match.group(1)))
+                    except ValueError:
                         continue
 
+                    position = self._parse_stdout_vector(f'position: [{match.group(2)}]')
+                    if position is None:
+                        try:
+                            values = [
+                                float(part)
+                                for part in match.group(2).replace(',', ' ').split()
+                            ]
+                        except ValueError:
+                            continue
+
+                        if len(values) < 3:
+                            continue
+                        position = np.asarray(values[:3], dtype=float)
+
                     self._last_stdout_timestamp = timestamp
+
+                    # One timestamp drives both visual streams.
                     self._update_camera_preview_for_timestamp(timestamp)
+                    self.live_view.append_pose(timestamp, position)
+
+                    self._set_status_values(
+                        fps=f'cam {self.live_view.frame_count} / pose {self.live_view.pose_count}'
+                    )
+                    continue
+
+                # Backward-compatible fallback for old stdout format.
+                # This is only used if the new VIO_POSE line is not present.
+                if stripped.startswith('timestamp:') or 'timestamp:' in stripped:
+                    try:
+                        raw_timestamp = stripped.split('timestamp:', 1)[1].strip().split()[0]
+                        self._last_stdout_timestamp = timestamp_to_seconds(float(raw_timestamp))
+                    except (IndexError, ValueError):
+                        continue
                     continue
 
                 if stripped.startswith('position:') or 'position:' in stripped:
@@ -2205,19 +2335,18 @@ def create_dashboard_classes():
 
                     timestamp = self._last_stdout_timestamp
                     if timestamp is None:
-                        timestamp = time.time()
+                        # Never use wall-clock time here. Wall-clock time makes
+                        # trajectory drawing look alive but breaks sync with the
+                        # dataset images.
+                        continue
 
+                    self._update_camera_preview_for_timestamp(timestamp)
                     self.live_view.append_pose(timestamp, position)
 
-                    now = time.time()
-                    if now - getattr(self, '_last_pose_status_update', 0.0) >= 0.25:
-                        self._last_pose_status_update = now
-                        self._set_status_values(
-                            fps=f'cam {self.live_view.frame_count} / pose {self.live_view.pose_count}')
-
+                    self._set_status_values(
+                        fps=f'cam {self.live_view.frame_count} / pose {self.live_view.pose_count}'
+                    )
                     continue
-
-
         def _run_finished(self, dataset_name, expected_output, exit_code, exit_status):
             self.process = None
             self.preview_timer.stop()
