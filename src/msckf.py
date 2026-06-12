@@ -17,50 +17,50 @@ def _make_output_filepath():
     return os.path.join(base, fname)
 
 class IMUState(object):
-    # id для следующего состояния IMU
+    # ID for the next IMU state
     next_id = 0
 
-    # Вектор гравитации в мировой СК
+    # Gravity vector in the world frame
     gravity = np.array([0., 0., -9.81])
 
-    # Смещение между системой IMU и системой корпуса.
-    # Преобразует вектор из системы IMU в систему корпуса.
-    # Ось z корпуса должна быть направлена вверх.
-    # Обычно это преобразование — тождественное.
+    # Transform between the IMU frame and the body frame.
+    # Transforms a vector from the IMU frame to the body frame.
+    # The body z-axis should point upward.
+    # This transform is usually the identity.
     T_imu_body = Isometry3d(np.identity(3), np.zeros(3))
 
     def __init__(self, new_id=None):
-        # Уникальный идентификатор состояния IMU.
+        # Unique identifier of the IMU state.
         self.id = new_id
-        # Время записи состояния.
+        # State timestamp.
         self.timestamp = None
 
-        # Ориентация: преобразует вектор из мировой системы в систему IMU (корпуса).
+        # Orientation: transforms a vector from the world frame to the IMU/body frame.
         self.orientation = np.array([0., 0., 0., 1.])
 
-        # Положение системы IMU (корпуса) в мировой системе.
+        # Position of the IMU/body frame in the world frame.
         self.position = np.zeros(3)
-        # Скорость системы IMU (корпуса) в мировой системе.
+        # Velocity of the IMU/body frame in the world frame.
         self.velocity = np.zeros(3)
 
-        # Смещения гироскопа и акселерометра.
+        # Gyroscope and accelerometer biases.
         self.gyro_bias = np.zeros(3)
         self.acc_bias = np.zeros(3)
 
-        # Эти три переменные должны физически соответствовать orientation, position и velocity.
-        # Используются для корректировки переходных матриц и обеспечения правильного ядра наблюдаемости.
-        # Ориентация, положение и скорость для "нулевого" состояния.
+        # These three variables must physically correspond to orientation, position, and velocity.
+        # They are used to correct transition matrices and preserve the correct observability nullspace.
+        # Orientation, position, and velocity of the reference state.
         self.orientation_null = np.array([0., 0., 0., 1.])
         self.position_null = np.zeros(3)
         self.velocity_null = np.zeros(3)
 
-        # Преобразование между IMU и левой камерой (cam0).
+        # Transform between the IMU and the left camera (cam0).
         self.R_imu_cam0 = np.identity(3)
         self.t_cam0_imu = np.zeros(3)
 
 
 class CAMState(object):
-    # Преобразует вектор из системы cam0 в систему cam1.
+    # Transforms a vector from the cam0 frame to the cam1 frame.
     R_cam0_cam1 = None
     t_cam0_cam1 = None
 
@@ -68,10 +68,10 @@ class CAMState(object):
         self.id = new_id
         self.timestamp = None
 
-        # Ориентация: преобразует вектор из мировой системы в систему камеры.
+        # Orientation: transforms a vector from the world frame to the camera frame.
         self.orientation = np.array([0., 0., 0., 1.])
 
-        # Положение системы камеры в мировой системе.
+        # Position of the camera frame in the world frame.
         self.position = np.zeros(3)
 
         self.orientation_null = np.array([0., 0., 0., 1.])
@@ -81,7 +81,7 @@ class CAMState(object):
 class StateServer(object):
     """
     
-    Хранит одно состояние IMU и несколько состояний камеры для построения измерительной модели.
+    Stores one IMU state and multiple camera states for building the measurement model.
     
     """
     def __init__(self):
@@ -98,25 +98,25 @@ class MSCKF(object):
         self.config = config
         self.optimization_config = config.optimization_config
 
-        # Буфер данных IMU.
-        # Используется для компенсации несинхронизации или задержек передачи между сообщениями IMU и изображениями.
+        # IMU data buffer.
+        # Used to compensate for time misalignment or transmission delays between IMU and image messages.
         self.imu_msg_buffer = []
 
-        # Вектор состояния
+        # State vector
         self.state_server = StateServer()
-        # Используемые признаки
+        # Active features
         self.map_server = dict()   # <FeatureID, Feature>
 
-        # Таблица критических значений chi-квадрат.
-        # Инициализируется для доверительного уровня 0.95.
+        # Chi-square critical value table.
+        # Initialized for a 0.95 confidence level.
         self.chi_squared_test_table = dict()
         for i in range(1, 200):
             self.chi_squared_test_table[i] = chi2.ppf(0.95, i)
 
-        # Устанавливает начальное состояние IMU.
-        # Начальная ориентация и положение задаются равными нулю по умолчанию.
-        # Начальную скорость и смещения можно задать параметрами.
-        # TODO: имеет ли смысл инициализировать смещения нулём?
+        # Sets the initial IMU state.
+        # Initial orientation and position are set to zero by default.
+        # Initial velocity and biases can be provided as parameters.
+        # TODO: Does it make sense to initialize the biases to zero?
 
         self.state_server.imu_state.velocity = config.velocity
         self.reset_state_cov()
@@ -173,11 +173,11 @@ class MSCKF(object):
 
     def imu_callback(self, imu_msg):
         """
-        Колбэк для обработки сообщений IMU.
+        Callback for processing IMU messages.
         """
-        # Сообщения IMU помещаются в буфер, а не обрабатываются сразу.
-        # Обработка IMU выполняется при поступлении следующего изображения,
-        # что облегчает учёт задержек передачи.
+        # IMU messages are stored in a buffer instead of being processed immediately.
+        # IMU processing is performed when the next image arrives,
+        # which makes it easier to account for transmission delays.
 
         self.imu_msg_buffer.append(imu_msg)
 
@@ -188,7 +188,7 @@ class MSCKF(object):
 
     def feature_callback(self, feature_msg):
         """
-        Колбэк для обработки измерений признаков.
+        Callback for processing feature measurements.
         """
 
         if not self.is_gravity_set:
@@ -196,28 +196,28 @@ class MSCKF(object):
         self._diag_timestamp = feature_msg.timestamp
         start = time.time()
 
-        # Запуск системы при получении первого изображения.
-        # Кадр с первым изображением принимается за начало координат.
+        # Start the system when the first image is received.
+        # The first image frame is used as the coordinate origin.
         if self.is_first_img:
             self.is_first_img = False
             self.state_server.imu_state.timestamp = feature_msg.timestamp
 
         t = time.time()
 
-        # Прогноз состояния IMU.
-        # Применяется ко всем сообщениям, полученным до изображения.
+        # IMU state prediction.
+        # Applied to all IMU messages received before the image.
         self.batch_imu_processing(feature_msg.timestamp)
 
         print('---batch_imu_processing    ', time.time() - t)
         t = time.time()
 
-        # Дополняет (расширяет) вектор состояния.
+        # Augments the state vector.
         self.state_augmentation(feature_msg.timestamp)
 
         print('---state_augmentation      ', time.time() - t)
         t = time.time()
 
-        # Добавляет новые наблюдения к существующим признакам или новым признакам в map server.
+        # Adds new observations to existing features or new features in the map server.
         self.add_feature_observations(feature_msg)
 
         if self.diagnostic_logger is not None:
@@ -238,8 +238,8 @@ class MSCKF(object):
         print('---add_feature_observations', time.time() - t)
         t = time.time()
 
-        # Выполняет обновление по измерениям при необходимости.
-        # Очищает признаки и состояния камеры.
+        # Performs the measurement update when required.
+        # Prunes features and camera states.
         self._diag_context = "remove_lost_features"
         self.remove_lost_features()
         self._diag_context = "none"
@@ -261,7 +261,7 @@ class MSCKF(object):
 
     def initialize_gravity_and_bias(self):
         """
-        Инициализирует смещения и начальную ориентацию IMU по первым измерениям IMU.
+        Initializes IMU biases and the initial orientation from the first IMU measurements.
         """
         sum_angular_vel = np.zeros(3)
         sum_linear_acc = np.zeros(3)
@@ -327,8 +327,8 @@ class MSCKF(object):
         G[6:9, 6:9] = -R_w_i.T
         G[9:12, 9:12] = np.identity(3)
 
-        # Аппроксимация матричной экспоненты до третьего порядка.
-        # Достаточно точно при dt ≲ 0.01 с.
+        # Third-order approximation of the matrix exponential.
+        # Accurate enough when dt is approximately less than or equal to 0.01 s.
         Fdt = F * dt
         Fdt_square = Fdt @ Fdt
         Fdt_cube = Fdt_square @ Fdt
@@ -371,7 +371,7 @@ class MSCKF(object):
         self.state_server.imu_state.velocity_null = imu_state.velocity
 
     def predict_new_state(self, dt, gyro, acc):
-        # TODO: Улучшит ли точность прямое интегрирование с использованием обратного кватерниона?
+        # TODO: Would direct integration using the inverse quaternion improve accuracy?
         gyro_norm = np.linalg.norm(gyro)
         Omega = np.zeros((4, 4))
         Omega[:3, :3] = -skew(gyro)
@@ -475,7 +475,7 @@ class MSCKF(object):
     def measurement_jacobian(self, cam_state_id, feature_id):
         """
 
-        Вычисляет якобиан измерения для одного признака, наблюдаемого в одном кадре.
+        Computes the measurement Jacobian for one feature observed in one frame.
 
         """
 
@@ -488,12 +488,12 @@ class MSCKF(object):
         R_w_c1 = CAMState.R_cam0_cam1 @ R_w_c0
         t_c1_w = t_c0_w - R_w_c1.T @ CAMState.t_cam0_cam1
 
-        # Положение 3D-признака в мировой системе координат
-        # и его наблюдение стереокамерами.
+        # 3D feature position in the world coordinate frame
+        # and its stereo-camera observation.
         p_w = feature.position
         z = feature.observations[cam_state_id]
 
-        # Преобразует положение признака из мировой системы в системы cam0 и cam1.
+        # Transforms the feature position from the world frame to the cam0 and cam1 frames.
         p_c0 = R_w_c0 @ (p_w - t_c0_w)
         p_c1 = R_w_c1 @ (p_w - t_c1_w)
         min_depth = 1e-6
@@ -548,11 +548,11 @@ class MSCKF(object):
 
     def feature_jacobian(self, feature_id, cam_state_ids):
         """
-        Вычисляет якобиан всех наблюдений данного признака по всем заданным состояниям камеры.
+        Computes the Jacobian of all observations of the feature over the given camera states.
         """
         feature = self.map_server[feature_id]
 
-        # Проверяет, в скольких состояниях камеры (по заданным id) этот признак действительно наблюдался.
+        # Checks how many of the selected camera states actually observed this feature.
 
         valid_cam_state_ids = []
         for cam_id in cam_state_ids:
@@ -637,7 +637,7 @@ class MSCKF(object):
                 })
             return
 
-        # Декомпозирует итоговую матрицу якобиана для снижения вычислительной сложности
+        # Decomposes the final Jacobian matrix to reduce computational complexity
 
         if H.shape[0] > H.shape[1]:
             Q, R = np.linalg.qr(H, mode='reduced')  # if M > N, return (M, N), (N, N)
@@ -1003,14 +1003,14 @@ class MSCKF(object):
 
 
     def remove_lost_features(self):
-        # Удаляет признаки, потерявшие трекинг.
-        # Определяет размер итоговой матрицы якобиана и вектора невязок.
+        # Removes features that have lost tracking.
+        # Determines the size of the final Jacobian matrix and residual vector.
         jacobian_row_size = 0
         invalid_feature_ids = []
         processed_feature_ids = []
 
         for feature in self.map_server.values():
-            # Пропускает признаки, которые ещё отслеживаются.
+            # Skips features that are still being tracked.
             if self.state_server.imu_state.id in feature.observations:
                 continue
             if len(feature.observations) < 3:
@@ -1184,7 +1184,7 @@ class MSCKF(object):
 
     def reset_state_cov(self):
         """
-        Сбрасывает ковариацию состояния.
+        Resets the state covariance.
         """
         state_cov = np.zeros((21, 21))
         state_cov[ 3: 6,  3: 6] = self.config.gyro_bias_cov * np.identity(3)
@@ -1196,7 +1196,7 @@ class MSCKF(object):
 
     def reset(self):
         """
-        Сбрасывает VIO в начальное состояние.
+        Resets VIO to the initial state.
         """
         imu_state = IMUState()
         imu_state.id = self.state_server.imu_state.id
@@ -1217,7 +1217,7 @@ class MSCKF(object):
 
     def online_reset(self):
         """
-        Онлайн-сброс системы при слишком большой неопределённости.
+        Performs an online system reset when uncertainty becomes too large.
         """
 
         if self.config.position_std_threshold <= 0:

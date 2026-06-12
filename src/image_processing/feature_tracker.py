@@ -75,14 +75,14 @@ class FeatureTracker:
         """
         Main tracking step: LK + stereo matching + RANSAC + curr_features update.
         """
-        # 1) Сетка по размеру изображения (из пирамиды берём форму)
+        # 1) Build the grid from the image size using the pyramid shape
         img = self.curr_cam0_pyramid
         grid_h, grid_w = self.get_grid_size(img)
 
-        # 2) Предсказание поворота из IMU
+        # 2) Predict rotation from IMU data
         cam0_R_p_c, cam1_R_p_c = self.integrate_imu_data()
 
-        # 3) Собираем прошлые точки
+        # 3) Collect previous feature points
         prev_ids, prev_lifetime = [], []
         prev_cam0_pts, prev_cam1_pts = [], []
         for f in chain.from_iterable(self.prev_features):
@@ -92,12 +92,12 @@ class FeatureTracker:
             prev_cam1_pts.append(f.cam1_point)
         prev_cam0_pts = np.array(prev_cam0_pts, dtype=np.float32)
 
-        # 4) Записываем число до трекинга
+        # 4) Record the feature count before tracking
         self.num_features['before_tracking'] = len(prev_cam0_pts)
         if len(prev_cam0_pts) == 0:
             return
 
-        # 5) Предсказание положения + LK-tracker
+        # 5) Position prediction + LK tracker
         pred_pts = self.predict_feature_tracking(prev_cam0_pts, cam0_R_p_c, self.cam0_intrinsics)
         curr_pts, track_mask, _ = cv2.calcOpticalFlowPyrLK(
             self.prev_cam0_pyramid,

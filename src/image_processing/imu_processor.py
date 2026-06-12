@@ -21,18 +21,18 @@ class IMUProcessor:
 
     def imu_callback(self, msg):
         """
-        Колбэк для входящих сообщений IMU.
+        Callback for incoming IMU messages.
         """
         self.imu_buffer.append(msg)
 
     def integrate_imu_data(self):
         """
-        Интегрирует гироскопические данные IMU между двумя последовательными изображениями,
-        используя временные метки self.cam0_prev_img_msg и self.cam0_curr_img_msg.
+        Integrates IMU gyroscope data between two consecutive images,
+        using the timestamps of self.cam0_prev_img_msg and self.cam0_curr_img_msg.
         
         Returns:
-            cam0_R_p_c: матрица вращения из предыдущего кадра cam0 в текущий
-            cam1_R_p_c: матрица вращения из предыдущего кадра cam1 в текущий
+            cam0_R_p_c: rotation matrix from the previous cam0 frame to the current frame
+            cam1_R_p_c: rotation matrix from the previous cam1 frame to the current frame
         """
         idx_begin = None
         for i, msg in enumerate(self.imu_buffer):
