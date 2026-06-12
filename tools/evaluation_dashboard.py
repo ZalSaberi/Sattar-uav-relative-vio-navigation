@@ -1954,6 +1954,21 @@ def create_dashboard_classes():
 
 
         def _advance_preview(self):
+            # Do not let the camera preview free-run during an active VIO process.
+            # During a real run, the preview must follow VIO timestamps parsed from
+            # stdout via _update_camera_preview_for_timestamp(). Otherwise the image
+            # panel can reach the end of the dataset while the trajectory is still
+            # being produced by the MSCKF backend.
+            free_run_enabled = os.getenv("DASHBOARD_FREE_RUN_PREVIEW", "0").lower() in (
+                "1", "true", "yes", "on"
+            )
+            if not free_run_enabled and getattr(self, "process", None) is not None:
+                try:
+                    if self.process.state() != QtCore.QProcess.NotRunning:
+                        return
+                except Exception:
+                    return
+
             if not self.camera_frame_paths:
                 return
 
