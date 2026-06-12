@@ -5,13 +5,13 @@ from .utils import Isometry3d, to_rotation
 class FeatureMotionChecker:
    def check_motion(self, cam_states):
         """
-        Проверяет, достаточно ли смещены входные положения камеры для триангуляции признака.
+        Checks whether the input camera poses have enough translation for feature triangulation.
 
-        Аргументы:
-            cam_states: входные положения камеры (словарь <CAMStateID, CAMState>)
+        Args:
+            cam_states: input camera poses as a dictionary <CAMStateID, CAMState>
 
-        Возвращает:
-            True, если смещение между положениями камеры достаточно для триангуляции (bool)
+        Returns:
+            True if the translation between camera poses is sufficient for triangulation (bool)
         """
         if self.optimization_config.translation_threshold < 0:
             return True

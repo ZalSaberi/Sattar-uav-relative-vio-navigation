@@ -1,6 +1,6 @@
 class FeatureMeasurement(object):
     """
-    Стереоизмерение признака.
+    Stereo feature measurement.
     """
     def __init__(self):
         self.id = None

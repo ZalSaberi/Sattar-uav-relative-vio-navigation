@@ -1,14 +1,14 @@
 class FeaturePruner:
     def __init__(self, grid_max_feature_num):
         """
-        grid_max_feature_num: макс. число точек в ячейке
+        grid_max_feature_num: maximum number of features per grid cell
         """
         self.grid_max_feature_num = grid_max_feature_num
 
     def prune_features(self):
         """
-        Удаляет часть признаков из ячейки сетки, если их слишком много,
-        чтобы ограничить число признаков в каждой ячейке.
+        Removes some features from a grid cell when there are too many,
+        so that the number of features in each cell stays bounded.
         """
         for i, features in enumerate(self.curr_features):
             # Continue if the number of features in this grid does

@@ -47,13 +47,13 @@ class ImageProcessingPipeline:
         self.prev_pyr0 = None
 
     def imu_callback(self, imu_msg):
-        """Передаёт IMU-сообщения в IMUProcessor."""
+        """Forwards IMU messages to IMUProcessor."""
         self.imu_processor.imu_callback(imu_msg)
 
     def stereo_callback(self, stereo_msg):
         """
-        Обрабатывает одно стереосообщение (cam0_msg + cam1_msg).
-        Возвращает сообщение FeatureMeasurement.
+        Processes one stereo message (cam0_msg + cam1_msg).
+        Returns a FeatureMeasurement message.
         """
 
         self.imu_processor.cam0_prev_img_msg = self.prev_cam0_msg

@@ -4,7 +4,7 @@ import cv2
 
 class OptimizationConfigEuRoC(object):
     """
-    Конфигурационные параметры для оптимизации положения 3D-признака.
+    Configuration parameters for optimizing the 3D feature position.
     """
     def __init__(self):
         self.translation_threshold = -1.0  # 0.2
@@ -43,30 +43,30 @@ class ConfigEuRoC(object):
         
 
         ## msckf vio
-        # гравитация
+        # Gravity
         self.gravity_acc = 9.81
         self.gravity = np.array([0.0, 0.0, -self.gravity_acc])
 
-        # Частота кадров стереоизображений. Используется только для
-        # определения временного порога каждой итерации фильтра.
+        # Stereo image frame rate. Used only to define
+        # the time threshold of each filter iteration.
         self.frame_rate = 20
 
-        # Максимальное число сохраняемых состояний камеры
+        # Maximum number of stored camera states
         self.max_cam_state_size = 20
 
-        # Порог неопределённости положения используется для определения,
-        # когда необходимо онлайн-сброс системы. В противном случае
-        # накапливающаяся неопределённость приведёт к неустойчивости оценки.
-        # Учитывать, что при онлайн-сбросе используется dead-reckoning.
-        # Чтобы отключить онлайн-сброс, установить этот порог в неположительное значение.
+        # Position uncertainty threshold used to determine
+        # when an online system reset is required. Otherwise,
+        # accumulated uncertainty can make the estimate unstable.
+        # Note that online reset uses dead reckoning.
+        # Set this threshold to a non-positive value to disable online reset.
         self.position_std_threshold = 2.0
 
-        # Порог для определения ключевых кадров
+        # Threshold for keyframe selection
         self.rotation_threshold = 0.15
         self.translation_threshold = 0.2
         self.tracking_rate_threshold = 0.5
 
-        # Параметры, связанные с шумом (используется дисперсия, а не стандартное отклонение)
+        # Noise-related parameters. Variance is used, not standard deviation.
         self.gyro_noise = 0.005 ** 2
         self.acc_noise = 0.05 ** 2
         self.gyro_bias_noise = 0.001 ** 2
@@ -76,18 +76,18 @@ class ConfigEuRoC(object):
         # initial state
         self.velocity = np.zeros(3)
 
-        # Начальную ковариацию для ориентации и положения можно задать нулевой.
-        # Но для скорости, смещений и внешних параметров должна быть ненулевая неопределённость.
+        # The initial covariance for orientation and position may be set to zero.
+        # Velocity, biases, and extrinsic parameters must have non-zero uncertainty.
         self.velocity_cov = 0.25
         self.gyro_bias_cov = 0.01
         self.acc_bias_cov = 0.01
         self.extrinsic_rotation_cov = 3.0462e-4
         self.extrinsic_translation_cov = 2.5e-5
 
-        ## параметры калибровки
-        # T_imu_cam: преобразует вектор из системы IMU в систему камеры.
-        # T_cn_cnm1: преобразует вектор из системы камеры-0 в систему камеры-1.
-        # см. https://github.com/ethz-asl/kalibr/wiki/yaml-formats
+        ## Calibration parameters
+        # T_imu_cam transforms a vector from the IMU frame to the camera frame.
+        # T_cn_cnm1 transforms a vector from camera-0 frame to camera-1 frame.
+        # See https://github.com/ethz-asl/kalibr/wiki/yaml-formats
         self.T_imu_cam0 = np.array([
             [ 0.014865542981794,   0.999557249008346,  -0.025774436697440,   0.065222909535531],
             [-0.999880929698575,   0.014967213324719,   0.003756188357967,  -0.020706385492719],

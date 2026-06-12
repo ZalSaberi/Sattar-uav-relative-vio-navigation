@@ -12,7 +12,7 @@ class FeaturePublisher:
                  cam0_intrinsics, cam0_dist_model, cam0_dist_coeffs,
                  cam1_intrinsics, cam1_dist_model, cam1_dist_coeffs):
         """
-        те же параметры дисторсии и интринсики для двух камер
+        Uses the same distortion and intrinsic parameter layout for both cameras.
         """
         self.cam0_intrinsics = cam0_intrinsics
         self.cam0_dist_model = cam0_dist_model
@@ -25,16 +25,16 @@ class FeaturePublisher:
         distortion_coeffs, rectification_matrix=np.identity(3),
         new_intrinsics=np.array([1, 1, 0, 0])):
         """
-        Аргументы:
-            pts_in: точки для коррекции дисторсии (undistort).
-            intrinsics: параметры внутренней калибровки камеры.
-            distortion_model: модель дисторсии камеры.
-            distortion_coeffs: коэффициенты дисторсии.
-            rectification_matrix: матрица выпрямления.
-            new_intrinsics: новые параметры внутренней калибровки.
+        Args:
+            pts_in: points to undistort.
+            intrinsics: camera intrinsic parameters.
+            distortion_model: camera distortion model.
+            distortion_coeffs: distortion coefficients.
+            rectification_matrix: rectification matrix.
+            new_intrinsics: new camera intrinsic parameters.
 
-        Возвращает:
-            pts_out: точки без дисторсии.
+        Returns:
+            pts_out: undistorted points.
         """
 
         if len(pts_in) == 0:
@@ -61,14 +61,14 @@ class FeaturePublisher:
     def distort_points(self, pts_in, intrinsics, distortion_model, 
             distortion_coeffs):
         """
-        Аргументы:
-            pts_in: точки для наложения дисторсии.
-            intrinsics: параметры внутренней калибровки камеры.
-            distortion_model: модель дисторсии камеры.
-            distortion_coeffs: коэффициенты дисторсии.
+        Args:
+            pts_in: points to distort.
+            intrinsics: camera intrinsic parameters.
+            distortion_model: camera distortion model.
+            distortion_coeffs: distortion coefficients.
 
-        Возвращает:
-            pts_out: точки с дисторсией. (N, 2)
+        Returns:
+            pts_out: distorted points. (N, 2)
         """
 
         if len(pts_in) == 0:
@@ -89,7 +89,7 @@ class FeaturePublisher:
     
     def publish(self):
         """
-        Публикует признаки на текущем изображении, включая как трекируемые, так и новые.
+        Publishes features in the current image, including both tracked and newly added features.
         """
         curr_ids = []
         curr_cam0_points = []

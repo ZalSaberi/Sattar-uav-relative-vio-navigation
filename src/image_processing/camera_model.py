@@ -4,9 +4,9 @@ import cv2
 class CameraModel:
     def __init__(self, intrinsics, distortion_model, distortion_coeffs):
         """
-        intrinsics: последовательность [fx, fy, cx, cy]
-        distortion_model: строка, например 'radtan' или 'equidistant'
-        distortion_coeffs: массив коэффициентов дисторсии
+        intrinsics: sequence [fx, fy, cx, cy]
+        distortion_model: string such as 'radtan' or 'equidistant'
+        distortion_coeffs: array of distortion coefficients
         """
         self.intrinsics = intrinsics
         self.distortion_model = distortion_model
@@ -49,14 +49,14 @@ class CameraModel:
     def distort_points(self, pts_in, intrinsics, distortion_model, 
             distortion_coeffs):
         """
-        Аргументы:
-            pts_in: исходные точки для применения дисторсии.
-            intrinsics: параметры внутренней калибровки камеры.
-            distortion_model: модель дисторсии камеры.
-            distortion_coeffs: коэффициенты дисторсии.
+        Args:
+            pts_in: source points to distort.
+            intrinsics: camera intrinsic parameters.
+            distortion_model: camera distortion model.
+            distortion_coeffs: distortion coefficients.
 
-        Возвращает:
-            pts_out: искажённые точки. (N, 2)
+        Returns:
+            pts_out: distorted points. (N, 2)
         """
         if len(pts_in) == 0:
             return []

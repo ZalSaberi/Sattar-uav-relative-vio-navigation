@@ -17,12 +17,12 @@ class FeatureInitializer:
         """
         detector:               FastFeatureDetector
         stereo_matcher:         StereoMatcher
-        config:                 конфиг с grid_num и др.
-        cam0_curr_img_msg:      текущее сообщение с изображением
-        curr_features:          список [[FeatureMetaData]] для заполнения
-        next_feature_id:        счётчик для присвоения id новым фичам
-        grid_row, grid_col:     разбивка на сетку
-        grid_min_feature_num:   минимальное число точек в каждой ячейке
+        config:                 configuration object with grid_num and related fields.
+        cam0_curr_img_msg:      current image message
+        curr_features:          list of [[FeatureMetaData]] to fill
+        next_feature_id:        counter used to assign ids to new features
+        grid_row, grid_col:     grid layout
+        grid_min_feature_num:   minimum number of features per grid cell
         """
         self.detector            = detector
         self.stereo_match        = stereo_matcher.stereo_match
@@ -36,7 +36,7 @@ class FeatureInitializer:
 
     def get_grid_size(self, img):
         """
-        Размер ячейки сетки в пикселях.
+        Grid cell size in pixels.
         """
         h, w = img.shape[:2]
         grid_h = int(np.ceil(h / self.grid_row))
@@ -45,7 +45,7 @@ class FeatureInitializer:
 
     def initialize_first_frame(self):
         """
-        Детектирует и инициализирует признаки на первом стереокадре.
+        Detects and initializes features on the first stereo frame.
         """
         img = self.cam0_curr_img_msg.image
         grid_height, grid_width = self.get_grid_size(img)

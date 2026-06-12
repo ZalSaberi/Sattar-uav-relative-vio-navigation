@@ -12,11 +12,11 @@ class StereoMatcher:
                  cam1_camera_model,
                  stereo_threshold):
         """
-        lk_params:         dict для cv2.calcOpticalFlowPyrLK
-        imu_processor:     IMUProcessor с полями R_cam0_imu, R_cam1_imu, t_cam0_imu, t_cam1_imu и методом integrate_imu_data
-        pyramid_builder:   PyramidBuilder с атрибутами curr_cam0_pyramid, curr_cam1_pyramid
-        camera_model:      CameraModel с методами undistort_points и distort_points
-        stereo_threshold:  порог для disparity и эпиполярного фильтра
+        lk_params:         dictionary for cv2.calcOpticalFlowPyrLK
+        imu_processor:     IMUProcessor with R_cam0_imu, R_cam1_imu, t_cam0_imu, t_cam1_imu fields and integrate_imu_data method
+        pyramid_builder:   PyramidBuilder with curr_cam0_pyramid and curr_cam1_pyramid attributes
+        camera_model:      CameraModel with undistort_points and distort_points methods
+        stereo_threshold:  threshold for disparity and epipolar filtering
         """
         self.lk_params       = lk_params
         self.integrate_imu   = imu_processor.integrate_imu_data
@@ -43,14 +43,14 @@ class StereoMatcher:
 
     def stereo_match(self, cam0_points):
         """
-        Сопоставляет точки из cam0 с cam1 с помощью оптического потока и стерео-геометрии.
+        Matches points from cam0 to cam1 using optical flow and stereo geometry.
 
-        Аргументы:
-            cam0_points: список или массив точек (x, y) на левом изображении.
+        Args:
+            cam0_points: list or array of (x, y) points in the left image.
 
-        Возвращает:
-            cam1_points: массив подобранных точек (x, y) на правом изображении.
-            inlier_mask: булевый массив, True для валидных соответствий.
+        Returns:
+            cam1_points: array of matched (x, y) points in the right image.
+            inlier_mask: boolean array, True for valid correspondences.
         """
         if len(cam0_points) == 0:
             self.last_stats = {

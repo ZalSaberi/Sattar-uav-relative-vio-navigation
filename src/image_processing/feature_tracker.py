@@ -25,18 +25,18 @@ class FeatureTracker:
                  grid_col,
                  ransac_threshold):
         """
-        lk_params:            dict для cv2.calcOpticalFlowPyrLK
-        imu_processor:        IMUProcessor (с методами integrate_imu_data и полями R_cam?_imu)
-        stereo_matcher:       StereoMatcher (с методом stereo_match)
+        lk_params:            dictionary for cv2.calcOpticalFlowPyrLK
+        imu_processor:        IMUProcessor with integrate_imu_data and R_cam?_imu fields
+        stereo_matcher:       StereoMatcher with stereo_match method
         cam?_intrinsics:      vec4 [fx, fy, cx, cy]
-        cam?_distortion_*:    модель и коэффициенты дисторсии
-        prev_cam0_pyramid:    пирамида предыдущего кадра (левая камера)
-        curr_cam0_pyramid:    пирамида текущего кадра (левая камера)
-        prev_features:        список списков FeatureMetaData для предыдущего кадра
-        curr_features:        список списков FeatureMetaData для заполнения
-        num_features:         dict для записи количества точек на этапах
-        grid_row/col:         параметры разбиения кадра на сетку
-        ransac_threshold:     порог для RANSAC-фильтрации
+        cam?_distortion_*:    distortion model and coefficients
+        prev_cam0_pyramid:    previous frame pyramid for the left camera
+        curr_cam0_pyramid:    current frame pyramid for the left camera
+        prev_features:        list of FeatureMetaData lists for the previous frame
+        curr_features:        list of FeatureMetaData lists to fill
+        num_features:         dictionary for recording feature counts at each stage
+        grid_row/col:         image grid parameters
+        ransac_threshold:     threshold for RANSAC filtering
         """
         self.lk_params            = lk_params
         self.integrate_imu_data   = imu_processor.integrate_imu_data
@@ -64,7 +64,7 @@ class FeatureTracker:
 
     def get_grid_size(self, img):
         """
-        Возвращает (height, width) одной ячейки сетки.
+        Returns the (height, width) of one grid cell.
         """
         h, w = img.shape[:2]
         grid_h = int(np.ceil(h / self.grid_row))
@@ -73,7 +73,7 @@ class FeatureTracker:
 
     def track_features(self):
         """
-        Основной трекинг: LK + стерео матчинг + RANSAC + обновление curr_features.
+        Main tracking step: LK + stereo matching + RANSAC + curr_features update.
         """
         # 1) Сетка по размеру изображения (из пирамиды берём форму)
         img = self.curr_cam0_pyramid
@@ -113,14 +113,14 @@ class FeatureTracker:
         curr_pts = np.asarray(curr_pts, dtype=np.float32).reshape(-1, 2)
         track_mask = track_mask.reshape(-1).astype(bool)
 
-        # 6) Отсечение выходящих за рамки
+        # 6) Reject out-of-bounds points
         for i, p in enumerate(curr_pts):
             if not track_mask[i]:
                 continue
             if not np.isfinite(p).all() or p[0] < 0 or p[0] >= img.shape[1] or p[1] < 0 or p[1] >= img.shape[0]:
                 track_mask[i] = False
 
-        # 7) Сбор оттрекиненных точек
+        # 7) Collect tracked points
         prev_tr_ids    = select(prev_ids, track_mask)
         prev_tr_life   = select(prev_lifetime, track_mask)
         prev_tr_cam0   = select(prev_cam0_pts, track_mask)
@@ -128,7 +128,7 @@ class FeatureTracker:
         curr_tr_cam0   = select(curr_pts, track_mask)
         self.num_features['after_tracking'] = len(curr_tr_cam0)
 
-        # 8) Стерео матчинг
+        # 8) Stereo matching
         curr_cam1_pts, match_mask = self.stereo_match(curr_tr_cam0)
         match_mask = np.asarray(match_mask).reshape(-1).astype(bool)
         pm_ids   = select(prev_tr_ids,    match_mask)
@@ -142,7 +142,7 @@ class FeatureTracker:
         cam0_inls = [1] * len(pm_cam0)
         cam1_inls = [1] * len(pm_cam1)
 
-        # 10) Обновляем curr_features
+        # 10) Update curr_features
         cnt = 0
         for i in range(len(cam0_inls)):
             if not (cam0_inls[i] and cam1_inls[i]):
@@ -165,7 +165,7 @@ class FeatureTracker:
 
     def predict_feature_tracking(self, input_pts, R_p_c, intrinsics):
         """
-        Компенсация вращения перед трекингом.
+        Rotation compensation before tracking.
         """
         if len(input_pts) == 0:
             return np.array([], dtype=np.float32)

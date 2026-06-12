@@ -4,8 +4,8 @@ import cv2
 class IMUProcessor:
     def __init__(self, T_imu_cam0, T_imu_cam1):
         """
-        T_imu_cam0: 4×4 матрица преобразования из системы IMU в систему камеры-0
-        T_imu_cam1: 4×4 матрица преобразования из системы IMU в систему камеры-1
+        T_imu_cam0: 4x4 transform matrix from the IMU frame to the camera-0 frame
+        T_imu_cam1: 4x4 transform matrix from the IMU frame to the camera-1 frame
         """
         # compute transforms from camera frames into IMU frame
         self.T_cam0_imu = np.linalg.inv(T_imu_cam0)
@@ -30,7 +30,7 @@ class IMUProcessor:
         Интегрирует гироскопические данные IMU между двумя последовательными изображениями,
         используя временные метки self.cam0_prev_img_msg и self.cam0_curr_img_msg.
         
-        Возвращает:
+        Returns:
             cam0_R_p_c: матрица вращения из предыдущего кадра cam0 в текущий
             cam1_R_p_c: матрица вращения из предыдущего кадра cam1 в текущий
         """

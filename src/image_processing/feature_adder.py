@@ -20,13 +20,13 @@ class FeatureAdder:
         """
         detector:               FastFeatureDetector
         stereo_matcher:         StereoMatcher
-        config:                 конфиг с grid_num и др.
-        cam0_curr_img_msg:      текущее сообщение с изображением
-        curr_features:          список [[FeatureMetaData]] для заполнения
-        next_feature_id:        счётчик для присвоения id новым фичам
-        grid_row/col:           разбивка на сетку
-        grid_max_feature_num:   верхний предел точек
-        grid_min_feature_num:   нижний предел точек
+        config:                 configuration object with grid_num and related fields.
+        cam0_curr_img_msg:      current image message
+        curr_features:          list of [[FeatureMetaData]] to fill
+        next_feature_id:        counter used to assign ids to new features
+        grid_row/col:           grid layout
+        grid_max_feature_num:   upper feature limit
+        grid_min_feature_num:   lower feature limit
         """
         self.detector          = detector
         self.stereo_matcher    = stereo_matcher
@@ -44,7 +44,7 @@ class FeatureAdder:
 
     def get_grid_size(self, img):
         """
-        Размер каждой ячейки сетки.
+        Size of each grid cell.
         """
         grid_height = int(np.ceil(img.shape[0] / self.grid_row))
         grid_width  = int(np.ceil(img.shape[1] / self.grid_col))
@@ -52,7 +52,7 @@ class FeatureAdder:
     
     def add_new_features(self):
         """
-        Детектирует новые признаки на изображении для равномерного распределения признаков по всему кадру.
+        Detects new image features to maintain a uniform feature distribution across the frame.
         """
         curr_img = self.cam0_curr_img_msg.image
         grid_height, grid_width = self.get_grid_size(curr_img)
